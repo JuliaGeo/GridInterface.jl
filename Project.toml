@@ -1,0 +1,13 @@
+name = "GridInterface"
+uuid = "ae69c2d7-6fba-4c43-9473-473fff3cdc1f"
+authors = ["GridInterface contributors", "Rafael Schouten", "Anshul Singhvi", "Gael Forget", "Milan Klower", "Simone Silvestri"]
+version = "0.1.0-DEV"
+
+[compat]
+julia = "1.9"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
