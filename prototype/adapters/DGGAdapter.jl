@@ -7,17 +7,32 @@
 # What maps to what:
 #   DGG.AbstractGrid (HierarchicalLevelGrid, PartialGrid, AuthalicGrid, ...)  → a GridInterface grid
 #   DGG.AbstractHierarchicalGridSystem                                        → a GridInterface system
-#   DGG.AbstractCellIndex                                                     → typed ids (level(c) binding)
+#   DGG.AbstractCellIndex                                                     → typed ids (declared with iscellindex)
 #   DGG.MultiOrderCellSet                                                     → GridInterface.MultiLevelSet (O(1) wrap)
-# treeify of a level grid / partial grid is GridInterface's generic hierarchy
-# cursor; DGG's own cursor stays reachable as `dgg_tree(g)` (wrap with GridAndTree).
+#
+# Trees: the provider's own tree wins. `treeify` of a DGG grid is DGG's cursor
+# (HierarchicalGridCursor, CopernicusDEM's MemoBlockCursor, ...). GridInterface's
+# generic hierarchy cursor stays reachable as `GrI.hierarchy_tree(g)` (wrap with
+# `GridAndTree`); on CopernicusDEM it uses a cached `RootIndex` over the 64,800 roots.
+#
+# Neighbours: DGG's analytic neighbours, disc form and ring bounds. HEALPix level
+# grids are re-ordered here so that Edge neighbour k lies across edge
+# (corner k, corner k+1) and declare `CounterClockwise`; the other systems keep
+# DGG's counter-clockwise order, which starts elsewhere, so they declare
+# `CustomOrder` (the alignment law is part of `CounterClockwise`).
+#
+# Vertices: HEALPix level grids name their vertices analytically
+# (`vertices_are_analytic`): corner k of a pixel and the cells around it come
+# from the nested lattice, with no table.
 module DGGAdapter
 
 import GridInterface as GrI
 using GridInterface
 import DiscreteGlobalGrids as DGG
 const FB = DGG.Fallbacks
+const HP = DGG.HEALPix
 import GeometryOpsCore as GOC
+import ConservativeRegridding.Trees as Trees
 
 export dgg_multilevel, dgg_tree, dgg_systems, DGG
 
@@ -25,11 +40,13 @@ const G = DGG.AbstractGrid
 const SYS = DGG.AbstractHierarchicalGridSystem
 const ID = DGG.AbstractCellIndex
 const HLG = DGG.HierarchicalLevelGrid
+const CDEM = DGG.CopernicusDEM.CopernicusDEMSystem
+const HPG = HLG{HP.HEALPixSystem}
 
 # --- recognition --------------------------------------------------------------
 GrI.isgrid(::Type{<:G}) = true
 GrI.issystem(::Type{<:SYS}) = true
-GrI.iscellindex(::Type{<:ID}) = true
+GrI.iscellindex(::Type{<:ID}) = true      # DGG ids cannot subtype GrI.AbstractCellIndex
 GrI.level(c::ID) = DGG.level(c)
 
 # --- identity -----------------------------------------------------------------
@@ -47,18 +64,32 @@ GrI.level(g::G) = DGG.level(g)
 
 GrI.gridrelation(::DGG.PartialGrid) = GrI.ParentGrid()
 Base.parent(pg::DGG.PartialGrid) = pg.complete          # (DGG defines no `parent` for it)
+GrI.isglobal(::HLG) = true
 
 # --- geometry -----------------------------------------------------------------
-# Cell-shape class, declared once per system (PRD: per system, holds for every
-# level grid). ConvexCells only where the boundary is the great-circle polygon of
-# the cell; systems that densify curved chart edges declare SimpleCells.
+# Cell-shape class and edge kind, declared once per system (they hold for every
+# level grid). ConvexCells/GeodesicEdges where the boundary is the great-circle
+# polygon of the cell; systems whose true edges are chart curves densify them
+# and declare SimpleCells/CurvedEdges.
 dgg_cellshape(::Any) = GrI.SimpleCells()
 dgg_cellshape(::DGG.S2System) = GrI.ConvexCells()
 dgg_cellshape(::DGG.H3System) = GrI.ConvexCells()
 dgg_cellshape(::DGG.IGeo7System) = GrI.ConvexCells()
+# CopernicusDEM cells are lon/lat boxes: parallels are not great circles.
 dgg_cellshape(s::DGG.AuthalicSystem) = dgg_cellshape(s.system)
+dgg_edgekind(s) = dgg_cellshape(s) isa GrI.ConvexCells ? GrI.GeodesicEdges() : GrI.CurvedEdges()
+dgg_edgekind(::DGG.H3System) = GrI.GeodesicEdges()       # bent at class III levels, but each piece is geodesic
+dgg_edgekind(s::DGG.AuthalicSystem) = dgg_edgekind(s.system)
 GrI.cellshape(g::G) = dgg_cellshape(DGG.system(g))
+# H3 is convex only at even (class II) levels: class III cells cross icosahedron
+# edges and bend there. So the shape is per level here, not per system.
+GrI.cellshape(g::HLG{DGG.H3System}) = iseven(g.level) ? GrI.ConvexCells() : GrI.SimpleCells()
+GrI.edgekind(g::G) = dgg_edgekind(DGG.system(g))
 GrI.extent_is_expensive(g::G) = !(FB.cell_cap_is_cheap(g) isa Val{true})
+# DGG builds a polygon per call (densified chart edges, H3/IGeo7 projections):
+# worth memoising per chunk. CopernicusDEM cells are four-corner boxes.
+GrI.cell_geometry_is_expensive(g::G) = !(DGG.system(g) isa CDEM)
+GrI.cellsize(g::G) = DGG.cellsize(g; radius=Float64(GOC.best_manifold(g).radius))
 
 @inline _id(g, i) = DGG.cellindex(g, Int(i))
 GrI.cell_boundary(g::G, i::Integer) = DGG.cell_boundary(g, _id(g, i))
@@ -70,6 +101,7 @@ GrI.cell_extent(g::G, i::Integer) = FB.cell_cap(g, _id(g, i))
 # typed-id forms: no localindex round trip (what a MultiLevelSet forwards through)
 GrI.cell_boundary(g::G, c::ID) = DGG.cell_boundary(g, c)
 GrI.cell_geometry(g::G, c::ID) = DGG.cell_polygon(g, c)
+GrI.cell_corners(g::G, c::ID) = DGG.cell_corners(g, c)
 GrI.cell_centroid(g::G, c::ID) = DGG.cell_centroid(g, c)
 GrI.cell_area(g::G, c::ID) = DGG.cell_area(g, c)
 GrI.cell_extent(g::G, c::ID) = FB.cell_cap(g, c)
@@ -80,8 +112,9 @@ function GrI.location_is_analytic(g::G)
     return s !== nothing && DGG.has_direct_location(s)
 end
 function GrI.cellat(g::G, p)
-    GrI.location_is_analytic(g) || return GrI.fallback_cellat(GOC.best_manifold(g), g, p)
-    c = DGG.cellat(g, p)
+    m = GOC.best_manifold(g)
+    GrI.location_is_analytic(g) || return GrI.fallback_cellat(m, g, GrI.check_point(m, p))
+    c = DGG.cellat(g, GrI.check_point(m, p))
     c === nothing && return nothing
     return DGG.localindex(g, c)
 end
@@ -96,22 +129,141 @@ _gwind(::DGG.Unordered) = GrI.Unordered()
 GrI.neighbors_are_analytic(g::G) = DGG.system(g) !== nothing
 GrI.neighbors(g::G, i::Integer; connectivity::GrI.Connectivity=GrI.Vertex()) =
     DGG.neighbors(g, Int(i), 1; connectivity=_dconn(connectivity))
+GrI.neighbors(g::G, i::Integer, k::Integer; connectivity::GrI.Connectivity=GrI.Vertex()) =
+    DGG.neighbors(g, Int(i), k; connectivity=_dconn(connectivity))
 GrI.ring(g::G, i::Integer, k::Integer; connectivity::GrI.Connectivity=GrI.Vertex()) =
     DGG.ring(g, Int(i), k; connectivity=_dconn(connectivity))
 GrI.maxneighbors(g::G, c::GrI.Connectivity) = DGG.maxneighbors(g, _dconn(c))
-GrI.winding(g::G, c::GrI.Connectivity) = _gwind(DGG.winding(g, _dconn(c)))
+GrI.maxring(g::G, k::Integer, c::GrI.Connectivity=GrI.Vertex()) =
+    k == 0 ? 1 : k == 1 ? DGG.maxneighbors(g, _dconn(c)) : DGG.maxring(g, k, _dconn(c))
+# DGG's counter-clockwise rings start on a system-specific spoke, not across
+# edge (corner 1, corner 2): only the re-ordered HEALPix grids keep CounterClockwise.
+GrI.winding(::HPG, ::GrI.Connectivity) = GrI.CounterClockwise()
+function GrI.winding(g::G, c::GrI.Connectivity)
+    w = _gwind(DGG.winding(g, _dconn(c)))
+    return w isa GrI.CounterClockwise && !(g isa HPG) ? GrI.CustomOrder() : w
+end
 
-# --- tree and chunks ------------------------------------------------------------
-# The generic hierarchy cursor (window mode on sorted systems, selection mode on A5).
-GrI.treeify(g::HLG) = GrI.hierarchy_tree(g)
-"DGG's own tree for a grid (HierarchicalGridCursor, MemoBlockCursor, ...): `GridAndTree(g, dgg_tree(g))`."
+"A fixed-capacity vector of Int on the stack (neighbour rings, vertex fans)."
+struct SmallInts{N} <: AbstractVector{Int}
+    v::NTuple{N,Int}
+    n::Int
+end
+Base.size(s::SmallInts) = (s.n,)
+Base.IndexStyle(::Type{<:SmallInts}) = IndexLinear()
+Base.@propagate_inbounds Base.getindex(s::SmallInts, i::Int) = (@boundscheck checkbounds(s, i); s.v[i])
+
+# HEALPix: nested_neighbors gives compass slots SW, W, NW, N, NE, E, SE, S (1..8),
+# -1 where a degree-3 vertex has no diagonal neighbour; level 0 repeats.
+# Corners are N, W, S, E; edge k = (corner k, corner k+1).
+const _HP_EDGE = (3, 1, 7, 5)                   # NW, SW, SE, NE: across edges NW, WS, SE, EN
+const _HP_VERT = (3, 2, 1, 8, 7, 6, 5, 4)       # NW, W, SW, S, SE, E, NE, N
+@inline function _hp_pick(nb, i::Int, slots::NTuple{K,Int}) where {K}
+    out = ntuple(_ -> 0, Val(K)); n = 0
+    for m in slots
+        q = nb[m]
+        q < 0 && continue
+        p = Int(q) + 1
+        p == i && continue
+        dup = false
+        for j in 1:n
+            out[j] == p && (dup = true)
+        end
+        dup && continue
+        n += 1
+        out = Base.setindex(out, p, n)
+    end
+    return SmallInts(out, n)
+end
+@inline function _hp_nb(g::HPG, i::Integer)
+    1 <= i <= DGG.ncells(g) || throw(BoundsError(g, i))
+    return HP.nested_neighbors(Int(i) - 1, g.level)
+end
+function GrI.neighbors(g::HPG, i::Integer; connectivity::GrI.Connectivity=GrI.Vertex())
+    nb = _hp_nb(g, i)
+    return connectivity isa GrI.Edge ? SmallInts(_pad8(_hp_pick(nb, Int(i), _HP_EDGE))) : _hp_pick(nb, Int(i), _HP_VERT)
+end
+_pad8(s::SmallInts{4}) = (ntuple(k -> k <= 4 ? s.v[k] : 0, Val(8)), s.n)
+SmallInts(t::Tuple{NTuple{8,Int},Int}) = SmallInts{8}(t[1], t[2])
+function GrI.neighbors(g::HPG, i::Integer, k::Integer; connectivity::GrI.Connectivity=GrI.Vertex())
+    r1 = GrI.neighbors(g, i; connectivity)
+    k <= 1 && return k == 1 ? collect(r1) : Int[]
+    d = DGG.neighbors(g, Int(i), k; connectivity=_dconn(connectivity))
+    return vcat(collect(r1), d[length(r1)+1:end])
+end
+GrI.ring(g::HPG, i::Integer, k::Integer; connectivity::GrI.Connectivity=GrI.Vertex()) =
+    k == 1 ? collect(GrI.neighbors(g, i; connectivity)) : DGG.ring(g, Int(i), k; connectivity=_dconn(connectivity))
+
+# --- region verbs: DGG's O(border) engines on rooted subtrees ---------------------
+# The primitive `halo(parent, positions, k)` on a level grid: when `positions` is
+# the descendant range of one cell (a rooted chunk), DGG's subtree engine answers.
+function _rooted(lg::HLG, r::AbstractUnitRange{<:Integer})
+    sys = DGG.system(lg)
+    (isempty(r) || !DGG.has_sorted_subtrees(sys)) && return nothing
+    c = DGG.cellindex(lg, Int(first(r)))
+    for l in DGG.levels(sys)
+        l > lg.level && break
+        a = DGG.ancestor(sys, c, l)
+        DGG.descendant_range(sys, a, lg.level) == r && return DGG.subtree(sys, a, lg.level)
+    end
+    return nothing
+end
+const _GENERIC_HALO = Tuple{Any,AbstractVector{<:Integer},Integer}
+const _GENERIC_BORDER = Tuple{Any,AbstractVector{<:Integer}}
+function GrI.halo(lg::HLG, positions::AbstractUnitRange{<:Integer}, k::Integer=1; connectivity::GrI.Connectivity=GrI.Vertex())
+    pg = k == 1 && connectivity isa GrI.Vertex ? _rooted(lg, positions) : nothing
+    pg === nothing && return invoke(GrI.halo, _GENERIC_HALO, lg, positions, k; connectivity)
+    return sort!(collect(Int, DGG.halo(pg)))
+end
+function GrI.border(lg::HLG, positions::AbstractUnitRange{<:Integer}; connectivity::GrI.Connectivity=GrI.Vertex())
+    pg = connectivity isa GrI.Vertex ? _rooted(lg, positions) : nothing
+    pg === nothing && return invoke(GrI.border, _GENERIC_BORDER, lg, positions; connectivity)
+    return sort!(collect(Int, DGG.border(pg)))
+end
+GrI.halo(pg::DGG.PartialGrid, k::Integer=1; connectivity::GrI.Connectivity=GrI.Vertex()) =
+    k == 1 && connectivity isa GrI.Vertex ? sort!(collect(Int, DGG.halo(pg))) :
+    GrI.halo(parent(pg), GrI.parentpositions(pg), k; connectivity)
+GrI.border(pg::DGG.PartialGrid; connectivity::GrI.Connectivity=GrI.Vertex()) =
+    connectivity isa GrI.Vertex ? sort!(collect(Int, DGG.border(pg))) :
+    GrI.border(parent(pg), GrI.parentpositions(pg); connectivity)
+
+# --- trees and chunks ---------------------------------------------------------------
+# The provider's own tree wins over the generic hierarchy cursor.
+GrI.treeify(g::G) = DGG.treeify(g)
+"DGG's own tree for a grid (also what `treeify` returns): `GridAndTree(g, dgg_tree(g))`."
 dgg_tree(g) = DGG.treeify(g)
+# DGG's cursors size themselves through CR's `Trees.ncells`; forward it.
+const DGGTree = Union{DGG.Engine.HierarchicalGridCursor,DGG.Engine.IndexTreeNode,
+    DGG.CopernicusDEM.BlockCursor,DGG.CopernicusDEM.MemoBlockCursor}
+GrI.split_weight(t::DGGTree) = Trees.split_weight(t)
 
-function GrI.chunks(g::HLG)
+# CopernicusDEM has 64,800 roots: the generic cursor gets a packed root index, built once.
+const _ROOT_INDEX = IdDict{Any,Any}()
+const _ROOT_LOCK = ReentrantLock()
+GrI.root_index(s::CDEM) = lock(() -> get!(() -> GrI.RootIndex(s), _ROOT_INDEX, s), _ROOT_LOCK)::GrI.RootIndex
+
+"""
+    chunks(g)
+
+The storage partition of a DGG level or partial grid on a sorted system: the
+hierarchy chunks at the level whose chunks hold closest to 4096 cells (GR's
+default). CopernicusDEM: one chunk per 1° tile (level 0). `chunks(g, l)` picks
+the level. A5 (unsorted) declares none.
+"""
+function GrI.chunks(g::G)
     s = DGG.system(g)
-    DGG.has_sorted_subtrees(s) || return nothing
-    l0 = first(DGG.levels(s))
-    return GrI.hierarchy_chunks(g, max(l0, g.level - 3))
+    (s === nothing || !DGG.has_sorted_subtrees(s)) && return nothing
+    return GrI.hierarchy_chunks(g, dgg_chunk_level(s, DGG.level(g)))
+end
+function dgg_chunk_level(s, l)
+    n = Float64(DGG.ncells(DGG.levelgrid(s, l)))
+    best, bestd = l, Inf
+    for lc in DGG.levels(s)
+        lc > l && break
+        d = abs(log(n / DGG.ncells(DGG.levelgrid(s, lc))) - log(4096))
+        d < bestd && ((best, bestd) = (lc, d))
+    end
+    return best
 end
 
 # --- hierarchy primitives --------------------------------------------------------
@@ -125,6 +277,43 @@ GrI.descendant_range(s::SYS, c::ID, l::Integer) = DGG.descendant_range(s, c, l)
 GrI.node_extent(s::SYS, c::ID) = DGG.node_extent(s, c)
 GrI.ancestor(s::SYS, c::ID, l::Integer) = DGG.ancestor(s, c, l)
 # (`Base.parent(sys, c)` is DGG's own method on Base.parent: nothing to add.)
+
+# --- analytic vertices: HEALPix -------------------------------------------------------
+# Around corner k (N, W, S, E) of pixel p, counter-clockwise from p: the compass
+# slots of the three other cells (one is missing at a degree-3 vertex).
+const _HP_FAN = ((5, 4, 3), (3, 2, 1), (1, 8, 7), (7, 6, 5))
+GrI.vertices_are_analytic(::HPG) = true
+GrI.nvertices(g::HPG) = DGG.ncells(g) + 2          # Euler: V = F + 2 for a quad tessellation of the sphere
+
+@inline function _hp_corner(g::HPG, i::Int, k::Int)
+    nside = 1 << g.level
+    ix, iy, f = HP.nested_to_xyf(i - 1, nside)
+    return HP.pixel_corners(ix, iy, f, nside)[k]
+end
+@inline function _hp_fan(g::HPG, i::Int, k::Int)
+    1 <= k <= 4 || throw(BoundsError(1:4, k))
+    nb = _hp_nb(g, i)
+    s = _hp_pick(nb, i, _HP_FAN[k])
+    return SmallInts((i, s.v[1], s.v[2], s.v[3]), s.n + 1)
+end
+@inline _d2(a, b) = (a[1] - b[1])^2 + (a[2] - b[2])^2 + (a[3] - b[3])^2
+function GrI.vertex_key(g::HPG, i::Integer, k::Integer)
+    fan = _hp_fan(g, Int(i), Int(k))
+    o = minimum(fan)
+    o == i && return GrI.VertexKey(Int(i), Int(k))
+    p = _hp_corner(g, Int(i), Int(k))
+    nside = 1 << g.level
+    ix, iy, f = HP.nested_to_xyf(o - 1, nside)
+    cs = HP.pixel_corners(ix, iy, f, nside)
+    j = 1; d = _d2(cs[1], p)
+    for jj in 2:4
+        dj = _d2(cs[jj], p)
+        dj < d && ((j, d) = (jj, dj))
+    end
+    return GrI.VertexKey(o, j)
+end
+GrI.vertex_cells(g::HPG, key::GrI.VertexKey) = _hp_fan(g, key.cell, key.corner)
+GrI.vertex_point(g::HPG, key::GrI.VertexKey) = _hp_corner(g, key.cell, key.corner)
 
 # --- multi-order sets -------------------------------------------------------------
 """
@@ -141,11 +330,12 @@ function dgg_multilevel(set::DGG.MultiOrderCellSet)
     return GrI.MultiLevelSet(s, set.cells)
 end
 
-"The registered DGG systems plus CopernicusDEM(90), with a small level for conformance runs."
+"The registered DGG systems plus CopernicusDEM(90), with a small level for conformance runs (H3 at an odd level too)."
 dgg_systems() = [
     ("HEALPix", DGG.HEALPixSystem(), 3),
     ("IGeo7", DGG.IGeo7System(), 3),
     ("H3", DGG.H3System(), 2),
+    ("H3 (odd level)", DGG.H3System(), 1),
     ("ISEA4R", DGG.ISEA4RSystem(), 3),
     ("S2", DGG.S2System(), 3),
     ("A5", DGG.A5System(), 2),

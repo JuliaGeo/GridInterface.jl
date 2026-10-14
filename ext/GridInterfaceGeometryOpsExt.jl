@@ -594,34 +594,90 @@ function _neighbors_in(m, grid, tree, i, conn, ::SingleRing)
         (k == 0 || (conn isa Edge && k < 2)) || push!(out, j)
         nothing
     end
-    # Counter-clockwise along the ring, starting across the edge (corner 1,
-    # corner 2): each neighbour gets the slot it touches on cell i's corners
-    # (edge k → k + ½, corner k → k), so Edge neighbour k lies across edge k.
-    # Ties (several cells at one corner of a non-conforming cell) by azimuth about
-    # the centroid, measured from the opposite side of the slot's point.
-    cs = cell_corners(grid, i)
-    n = length(cs)
+    # Counter-clockwise along cell i's ring, starting across the edge (corner 1,
+    # corner 2): each neighbour sits at the middle of the stretch of i's boundary
+    # it shares, measured in corner units (edge k spans [k-1, k)), so Edge
+    # neighbour k lies across edge k. On non-conforming or curved-edge grids the
+    # shared stretch is measured along the full (densified) boundary.
+    rb = cell_boundary(grid, i)
+    par = _corner_params(m, rb, cell_corners(grid, i))
+    n = length(cell_corners(grid, i))
+    # Ties (several cells meeting cell i at one point, e.g. around a pole) by
+    # azimuth about i's centroid, measured from the side opposite that point.
     c = cell_centroid(grid, i)
     key = map(out) do j
-        sl = _slot(m, cs, cell_boundary(grid, j), tol)
-        k = floor(Int, sl)
-        ref = sl == k ? cs[k] : _mid(m, cs[k], cs[mod1(k + 1, n)])
-        (mod(sl - 1.5, n), mod2pi(_azimuth(m, c, cell_centroid(grid, j)) - _azimuth(m, c, ref) + π))
+        t = _shared_mid(m, rb, par, n, cell_boundary(grid, j), tol)
+        q = _ring_point(m, rb, par, n, t)
+        (round(mod(t - 0.5, n); digits=9), mod2pi(_azimuth(m, c, cell_centroid(grid, j)) - _azimuth(m, c, q) + π))
     end
     return out[sortperm(key)]
 end
-function _slot(m, cs, rb, tol)
-    n = length(cs)
-    on = [_on_boundary(m, rb, cs[k], tol) for k in 1:n]
+
+# corner-unit parameter of each boundary point of ring rb (corner k at k-1)
+function _corner_params(m, rb, cs)
+    nb, n = length(rb), length(cs)
+    idx = zeros(Int, n)
+    b = 1
+    for k in 1:n, _ in 1:nb
+        if _same(m, rb[b], cs[k], 1e-12)
+            idx[k] = b; break
+        end
+        b = mod1(b + 1, nb)
+    end
+    par = zeros(nb)
+    any(==(0), idx) && return [(b - 1) * n / nb for b in 1:nb]     # corners not found: uniform
     for k in 1:n
-        on[k] && on[mod1(k + 1, n)] && return k + 0.5
+        b0 = idx[k]; b1 = idx[mod1(k + 1, n)]
+        span = mod(b1 - b0, nb); span == 0 && (span = nb)
+        for s in 0:span-1
+            par[mod1(b0 + s, nb)] = (k - 1) + s / span
+        end
     end
-    k = findfirst(on)
-    k === nothing || return Float64(k)
-    for q in rb, k in 1:n                          # a corner of j inside an edge of i
-        _onseg(m, cs[k], cs[mod1(k + 1, n)], q, tol) && return k + 0.5
+    return par
+end
+# parameter (corner units) of point q on ring rb, or nothing
+function _ring_param(m, rb, par, n, q, tol)
+    nb = length(rb)
+    for b in 1:nb
+        a = rb[b]; c = rb[mod1(b + 1, nb)]
+        _same(m, a, q, tol) && return par[b]
+        if _onseg(m, a, c, q, tol)
+            f = _chord(m, a, q) / max(_chord(m, a, c), 1e-300)
+            pb = par[b]; pc = par[mod1(b + 1, nb)]
+            pc < pb && (pc += n)
+            return pb + f * (pc - pb)
+        end
     end
-    return 1.5
+    return nothing
+end
+# the boundary point at corner-unit parameter t (nearest boundary point)
+function _ring_point(m, rb, par, n, t)
+    best = 1; d = Inf
+    for b in eachindex(rb)
+        e = abs(mod(par[b] - t + n / 2, n) - n / 2)
+        e < d && ((best, d) = (b, e))
+    end
+    return rb[best]
+end
+_chord(::Planar, a, b) = (x = _xy(a); y = _xy(b); hypot(x[1] - y[1], x[2] - y[2]))
+_chord(::Spherical, a, b) = _norm(_sub(_v(a), _v(b)))
+function _shared_mid(m, rb, par, n, rj, tol)
+    ts = Float64[]
+    for q in rj
+        t = _ring_param(m, rb, par, n, q, tol)
+        t === nothing || push!(ts, mod(t, n))
+    end
+    for (b, q) in enumerate(rb)
+        _on_boundary(m, rj, q, tol) && push!(ts, mod(par[b], n))
+    end
+    isempty(ts) && return 0.5
+    sort!(ts)
+    # the shared stretch is short: if it wraps past corner 1, unwrap it
+    gaps = [ts[mod1(k + 1, length(ts))] - ts[k] + (k == length(ts) ? n : 0) for k in eachindex(ts)]
+    k = argmax(gaps)                          # the largest gap is outside the stretch
+    lo = ts[mod1(k + 1, length(ts))]; hi = ts[k]
+    hi < lo && (hi += n)
+    return mod((lo + hi) / 2, n)
 end
 # general cells: "touching" (shared boundary or overlapping area); unordered
 function _neighbors_in(m, grid, tree, i, conn, ::GrI.CellShape)

@@ -244,7 +244,9 @@ function halo(P, positions::AbstractVector{<:Integer}, k::Integer=1; connectivit
     return out
 end
 halo(s::Subset, k::Integer=1; connectivity::Connectivity=Vertex()) = halo(s.parent, s.cells, k; connectivity)
-halo(grid, k::Integer=1; connectivity::Connectivity=Vertex()) = Int[]
+halo(grid, k::Integer=1; connectivity::Connectivity=Vertex()) = _halo(gridrelation(grid), grid, k, connectivity)
+_halo(::ParentGrid, grid, k, conn) = halo(parent(grid), parentpositions(grid), k; connectivity=conn)
+_halo(::GridRelation, grid, k, conn) = Int[]
 
 """
     border(parent, positions; connectivity = Vertex()) -> Vector{Int}
@@ -261,7 +263,9 @@ function border(P, positions::AbstractVector{<:Integer}; connectivity::Connectiv
     return out
 end
 border(s::Subset; connectivity::Connectivity=Vertex()) = border(s.parent, s.cells; connectivity)
-border(grid; connectivity::Connectivity=Vertex()) = Int[]
+border(grid; connectivity::Connectivity=Vertex()) = _border(gridrelation(grid), grid, connectivity)
+_border(::ParentGrid, grid, conn) = border(parent(grid), parentpositions(grid); connectivity=conn)
+_border(::GridRelation, grid, conn) = Int[]
 
 """
     interior(parent, positions; connectivity = Vertex()) -> AbstractVector{Int}
@@ -285,4 +289,6 @@ function interior(P, positions::AbstractVector{<:Integer}; connectivity::Connect
     return out
 end
 interior(s::Subset; connectivity::Connectivity=Vertex()) = interior(s.parent, s.cells; connectivity)
-interior(grid; connectivity::Connectivity=Vertex()) = Base.OneTo(ncells(grid))
+interior(grid; connectivity::Connectivity=Vertex()) = _interior(gridrelation(grid), grid, connectivity)
+_interior(::ParentGrid, grid, conn) = interior(parent(grid), parentpositions(grid); connectivity=conn)
+_interior(::GridRelation, grid, conn) = Base.OneTo(ncells(grid))

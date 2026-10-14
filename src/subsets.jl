@@ -71,6 +71,10 @@ order (the parent space; `subtree` emits these). For a subset of a subset this
 differs from [`globalindex`](@ref), which answers in the complete grid.
 """
 parentpositions(s::Subset) = s.cells
+# provider subsets (a DGG PartialGrid): lazily, through the ids
+parentpositions(grid) = _ppositions(gridrelation(grid), grid)
+_ppositions(::ParentGrid, grid) = FuncVec(i -> localindex(parent(grid), cellindex(grid, i))::Int, ncells(grid))
+_ppositions(r::GridRelation, grid) = throw(ArgumentError("$(typeof(grid)) has no parent grid ($(typeof(r)))"))
 
 gridrelation(::Subset) = ParentGrid()
 system(s::Subset) = system(s.parent)

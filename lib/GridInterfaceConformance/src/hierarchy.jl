@@ -39,7 +39,7 @@ function check_system(sys; name::AbstractString=string(nameof(typeof(sys))), lev
         m = best_manifold(GrI.levelgrid(sys, l0))
         extent_contains_extent(m, u, a) && extent_contains_extent(m, u, b), "union $(u)"
     end
-    guarded!(rep, F, "chunks(levelgrid, l) partitions by ancestor (sampled)") do
+    GrI.has_sorted_subtrees(sys) && guarded!(rep, F, "chunks(levelgrid, l) partitions by ancestor (sampled)") do
         l = Ls[min(end, 2)]
         lg = GrI.levelgrid(sys, l)
         ch = GrI.chunks(lg, l0)
