@@ -197,9 +197,11 @@ GrI.ring(g::HPG, i::Integer, k::Integer; connectivity::GrI.Connectivity=GrI.Vert
 # --- region verbs: DGG's O(border) engines on rooted subtrees ---------------------
 # The primitive `halo(parent, positions, k)` on a level grid: when `positions` is
 # the descendant range of one cell (a rooted chunk), DGG's subtree engine answers.
+# (Not CopernicusDEM: DGG's subtree halo engine does not finish on a 1° tile of
+# 1.06M cells; the generic merge takes seconds there.)
 function _rooted(lg::HLG, r::AbstractUnitRange{<:Integer})
     sys = DGG.system(lg)
-    (isempty(r) || !DGG.has_sorted_subtrees(sys)) && return nothing
+    (isempty(r) || !DGG.has_sorted_subtrees(sys) || sys isa CDEM) && return nothing
     c = DGG.cellindex(lg, Int(first(r)))
     for l in DGG.levels(sys)
         l > lg.level && break
