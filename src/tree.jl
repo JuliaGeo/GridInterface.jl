@@ -73,14 +73,25 @@ grid_extent(grid) = STI.node_extent(treeify(grid))
 
 Ascending positions of the cells whose [`cell_extent`](@ref) intersects
 extent `ext`, found by descending `treeify(grid)`. Exact geometric filtering is
-the caller's business.
+the caller's business. On a spherical grid a lon/lat `Extents.Extent` is first
+turned into a covering cap ([`query_region`](@ref), from the GeometryOps extension).
 """
 function query(grid, ext)
     out = Int[]
     tree = treeify(grid)
-    STI.depth_first_search(e -> Extents.intersects(e, ext), tree) do i
+    region = query_region(best_manifold(grid), ext)
+    STI.depth_first_search(e -> Extents.intersects(e, region), tree) do i
         push!(out, i)
         nothing
     end
     return sort!(out)
 end
+
+"""
+    query_region(manifold, ext)
+
+The query extent in the grid's own extent type. Identity by default; the
+GeometryOps extension maps a lon/lat `Extents.Extent{(:X,:Y)}` to a covering
+`SphericalCap` on `Spherical()`.
+"""
+query_region(::Any, ext) = ext

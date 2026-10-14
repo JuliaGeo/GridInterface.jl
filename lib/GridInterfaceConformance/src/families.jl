@@ -406,7 +406,8 @@ function check_dual!(rep, grid, m, S)
             if length(b) < 3
                 degenerate += 1; push!(bad, v); continue
             end
-            ring_is_ccw(m, b, GrI.vertex_point(grid, v)) || push!(bad, v)
+            # open fans put the vertex itself on the ring, so wind about the ring's own mean
+            ring_is_ccw(m, b, m isa Spherical ? ring_mean(b) : GrI.vertex_point(grid, v)) || push!(bad, v)
         end
         metric!(rep, "dual degenerate cells (sampled)", degenerate)
         isempty(bad), "$(length(bad)) bad dual cells (degenerate: $degenerate), e.g. $(first(bad, 5))"

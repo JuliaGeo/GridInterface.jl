@@ -407,4 +407,32 @@ function GrI.clear_caches!()
     return nothing
 end
 
+
+# --- query regions ----------------------------------------------------------
+# A lon/lat box as a covering cap: centre at the mean of its densified boundary,
+# radius the largest boundary distance plus half the sample spacing (the far
+# point of a box from an interior centre lies on its boundary).
+function GrI.query_region(::Spherical, ext::Extents.Extent{(:X, :Y)})
+    (x0, x1), (y0, y1) = ext.X, ext.Y
+    n = 32
+    pts = UnitSphericalPoint{Float64}[]
+    for t in range(0, 1; length=n + 1)
+        x = x0 + t * (x1 - x0); y = y0 + t * (y1 - y0)
+        push!(pts, _ll(x, y0), _ll(x1, y), _ll(x, y1), _ll(x0, y))
+    end
+    s = (0.0, 0.0, 0.0)
+    for p in pts
+        s = _add(s, _v(p))
+    end
+    ns = _norm(s)
+    ns > 1e-9 || return _full_cap()
+    c = _usp(_scale(s, inv(ns)))
+    r = maximum(p -> spherical_distance(c, p), pts)
+    step = deg2rad(max(x1 - x0, y1 - y0)) / n
+    r = r + step
+    r < π || return _full_cap()
+    return SphericalCap(c, r)
+end
+_ll(x, y) = GO.UnitSphereFromGeographic()((Float64(x), Float64(y)))
+
 end

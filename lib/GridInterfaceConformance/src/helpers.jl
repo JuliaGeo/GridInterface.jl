@@ -67,6 +67,7 @@ function _signed_area(::Planar, ring)
     return s / 2
 end
 ring_is_ccw(m::Planar, ring, c) = _signed_area(m, ring) > 0
+ring_mean(ring) = (s = reduce((a, b) -> a .+ b, (_v(p) for p in ring)); s ./ sqrt(_dot(s, s)))
 ring_is_ccw(m::Spherical, ring, c) = _turning(m, ring, c) > π
 
 function ring_is_convex(::Planar, ring; tol=1e-12)

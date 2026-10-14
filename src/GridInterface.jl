@@ -54,7 +54,7 @@ export cell_geometry, cell_boundary, cell_corners, cell_centroid, cell_area, cel
 export Tessellation, Tessellating, Overlapping, tessellation
 export cellat, location_is_analytic
 # --- tree
-export treeify, subtree, GridAndTree, split_weight, extent_is_expensive, query, grid_extent
+export treeify, subtree, GridAndTree, split_weight, extent_is_expensive, query, query_region, grid_extent
 # --- subsets and chunks
 export subset, Subset, system, chunks, parentpositions, gridrelation, NoParent, ParentGrid, ParentSystem
 # --- neighbours

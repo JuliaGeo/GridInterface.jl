@@ -28,7 +28,7 @@ function check_system(sys; name::AbstractString=string(nameof(typeof(sys))), lev
     walk = _bushy(sys, depth, nsamples)
     guarded!(rep, F, "parent/children inverses; children ascending, one level down") do
         ok = true
-        for c in walk
+        for c in walk[sample_positions(length(walk), 4nsamples)]
             GrI.level(c) >= last(Ls) && continue
             ch = collect(GrI.children(sys, c))
             ok &= issorted(ch) && !isempty(ch)
@@ -42,7 +42,7 @@ function check_system(sys; name::AbstractString=string(nameof(typeof(sys))), lev
     if GrI.has_sorted_subtrees(sys)
         guarded!(rep, F, "descendant_range exact against a children-recursion oracle") do
             ok = true
-            for c in walk[1:min(end, 12)], dl in 0:2
+            for c in walk[sample_positions(length(walk), 12)], dl in 0:2
                 l = GrI.level(c) + dl
                 l > last(Ls) && continue
                 lg = GrI.levelgrid(sys, l)
@@ -66,7 +66,7 @@ function check_system(sys; name::AbstractString=string(nameof(typeof(sys))), lev
     end
     guarded!(rep, F, "covering law on a bushy walk (node_extent ⊇ descendant geometry)") do
         bad = 0; m = nothing
-        for c in walk[1:min(end, 12)]
+        for c in walk[sample_positions(length(walk), 12)]
             e = GrI.node_extent(sys, c)
             for dl in 0:2
                 l = GrI.level(c) + dl
@@ -115,7 +115,9 @@ end
 
 function _bushy(sys, depth, nsamples)
     out = collect(GrI.rootcells(sys))
-    frontier = copy(out)
+    # expand only a sample of each frontier: a system may have 10^4 roots with
+    # 10^5 children each (CopernicusDEM), so the full walk is not affordable
+    frontier = out[sample_positions(length(out), nsamples)]
     for _ in 1:depth
         next = eltype(out)[]
         for c in frontier
