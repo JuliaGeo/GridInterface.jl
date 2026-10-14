@@ -144,6 +144,35 @@ function _ring_neighbours(d, c, v)
     vs = _cverts(d, c)
     k = findfirst(==(v), vs)
     n = length(vs)
+    # a degenerate ring may repeat v (lon/lat polar cells): step past the repeats
+    p = k; while p > k - n && vs[mod1(p - 1, n)] == v; p -= 1; end
+    q = k; while q < k + n && vs[mod1(q + 1, n)] == v; q += 1; end
+    return vs[mod1(p - 1, n)], vs[mod1(q + 1, n)]
+end
+
+"""
+    vertex_isopen(grid, v) -> Bool
+
+Whether the fan of cells around vertex `v` is open (`v` lies on the outer
+boundary of a regional grid). The dual cell of an open vertex is the median
+dual: its ring carries points (the vertex, edge midpoints) that are not source
+centroids, so `vertex_cells(grid, v)` and `cell_boundary(dual(grid), v)` no
+longer correspond one to one. Fallback: from the vertex table.
+"""
+function vertex_isopen(grid, v::Integer)
+    cs = vertex_cells(grid, v)
+    m = length(cs)
+    m < 3 && return true
+    # closed iff the shared-edge law closes the cycle: prev(c_k) == next(c_{k+1})
+    for k in 1:m
+        _prevnext(grid, cs[k], v)[1] == _prevnext(grid, cs[k == m ? 1 : k + 1], v)[2] || return true
+    end
+    return false
+end
+function _prevnext(grid, c, v)
+    vs = cell_vertices(grid, c)
+    k = findfirst(==(v), vs)
+    n = length(vs)
     return vs[mod1(k - 1, n)], vs[mod1(k + 1, n)]
 end
 
@@ -151,6 +180,9 @@ function cell_boundary(d::DualGrid, v::Integer)
     1 <= v <= ncells(d) || _throw_bounds(d, v)
     g = d.primal
     P = typeof(_vpoint(d, v))
+    if !vertex_isopen(g, v)      # closed fan: the centroids in order, nothing else
+        return P[convert(P, cell_centroid(g, c)) for c in _vcells(d, v)]
+    end
     cs = collect(_vcells(d, v))
     pn = [_ring_neighbours(d, c, v) for c in cs]
     # the fan is open iff some cell's "next" edge is nobody's "prev" edge
@@ -177,4 +209,6 @@ end
 
 _midpoint(::Planar, a, b) = typeof(a)(((a[1] + b[1]) / 2, (a[2] + b[2]) / 2))
 _midpoint(::Spherical, a, b) = (s = (a[1] + b[1], a[2] + b[2], a[3] + b[3]); r = sqrt(s[1]^2 + s[2]^2 + s[3]^2);
-    typeof(a)(s[1] / r, s[2] / r, s[3] / r))
+    _like(a, s[1] / r, s[2] / r, s[3] / r))
+_like(a::Tuple, x...) = x
+_like(a, x...) = typeof(a)(x...)

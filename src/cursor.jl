@@ -170,8 +170,12 @@ Base.@propagate_inbounds function Base.getindex(e::LeafEntries, i::Int)
     return (fr_emit(e.fr, k), fr_extent(e.fr, k))
 end
 
-STI.child_indices_extents(n::HierarchyCursor{F,ID,E}) where {F,ID,E} =
-    LeafEntries{F,E}(n.fr, n.lo, max(0, _count(n)))
+function STI.child_indices_extents(n::HierarchyCursor{F,ID,E}) where {F,ID,E}
+    entries = LeafEntries{F,E}(n.fr, n.lo, max(0, _count(n)))
+    # cheap extents stay lazy (no allocation); expensive ones are built once per visit
+    return _fr_extent_is_expensive(n.fr) ? collect(entries) : entries
+end
+_fr_extent_is_expensive(F) = extent_is_expensive(F.grid)
 
 # --- the selection-mode cursor (systems without sorted subtrees) -------------
 
@@ -276,12 +280,16 @@ end
 The hierarchy cursor over positions `cells` (ascending) of a complete level
 grid, emitting those parent positions.
 """
-function hierarchy_subtree(grid, cells::AbstractVector{<:Integer}; bucket::Integer=1)
+function hierarchy_subtree(grid, cells::AbstractVector{<:Integer}; bucket::Integer=1, root=nothing)
     sys = system(grid)
     keys = cells isa AbstractVector{Int} ? cells : Int.(cells)
     issorted(keys) || (keys = sort(keys))
     fr = SubsetFrontier(grid, sys, level(grid), keys, true)
-    return _cursor(fr, sys; bucket)
+    return _cursor(fr, sys; root, bucket)
 end
+
+# `subtree` of a chunk: start at the chunk's root cell rather than the synthetic root.
+subtree(grid, s::Subset) = parent(s) === grid && s.root !== nothing && gridrelation(grid) isa NoParent ?
+    hierarchy_subtree(grid, s.cells; root=s.root) : subtree(grid, parentpositions(s))
 
 treeify(s::Subset) = _default_treeify(s)

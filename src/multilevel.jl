@@ -175,7 +175,7 @@ function subtree(s::MultiLevelSet, cells::AbstractVector{<:Integer})
 end
 
 """
-    aggregation_matrix(s::MultiLevelSet)
+    aggregation_pairs(s::MultiLevelSet) -> (rows, cols)
 
 The 0/1 expansion of members to their reference-level descendants, as
 `(rows, cols)` index vectors: row = reference-level position, col = member.
@@ -188,3 +188,4 @@ function aggregation_pairs(s::MultiLevelSet)
     end
     return rows, cols
 end
+_fr_extent_is_expensive(s::MultiLevelSet) = extent_is_expensive(s)

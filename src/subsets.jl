@@ -131,3 +131,6 @@ Level grids of systems with sorted subtrees can use
 [`hierarchy_chunks`](@ref).
 """
 chunks(grid) = nothing
+
+# A subset already stores its parent positions: no id round trip, no `Nothing`.
+_toglobal(::ParentGrid, s::Subset, i) = toindex(s.parent, s.cells[i], Index(Global()))

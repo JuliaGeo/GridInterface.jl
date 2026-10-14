@@ -511,7 +511,11 @@ function check_grid_performance!(rep, grid, S)
         T = Base.return_types(cell_centroid, Tuple{typeof(grid),Int})
         length(T) == 1 && isconcretetype(only(T)), string(T)
     end
-    t = @elapsed GrI.treeify(grid)
+    try
+        GrI.treeify(grid)
+    catch e
+        return law!(rep, F, "treeify", false, "threw: " * first(sprint(showerror, e), 200))
+    end
     t = @elapsed GrI.treeify(grid)
     a = _alloc(GrI.treeify, grid)
     metric!(rep, "treeify time", t)

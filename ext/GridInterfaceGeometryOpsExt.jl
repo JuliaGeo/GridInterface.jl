@@ -198,6 +198,13 @@ function _in_convex_sphere(ring, p; tol=1e-12)
 end
 function _winding_sphere(ring, p; tol=1e-12)
     n = length(ring)
+    # the tangent-plane winding sum is also ±2π about the antipode of a ring:
+    # a cell smaller than a hemisphere holds p only on p's side of the sphere
+    s = (0.0, 0.0, 0.0)
+    for k in 1:n
+        s = _add(s, _v(ring[k]))
+    end
+    _dot(s, p) > 0 || return false
     total = 0.0
     for k in 1:n
         a = _v(ring[k]); b = _v(ring[mod1(k + 1, n)])
@@ -266,8 +273,9 @@ function _cached_tree(grid)
 end
 
 # --- point location ---------------------------------------------------------
-function GrI.fallback_cellat(m::Manifold, grid, p)
-    tree = _cached_tree(grid)
+GrI.fallback_cellat(m::Manifold, grid, p) = _cellat_in(m, grid, _cached_tree(grid), p)
+# function barrier: the cache is an IdDict{Any,Any}, so the tree's type is known only here
+function _cellat_in(m, grid, tree, p)
     q = _point_extent(m, p)
     best = Ref(typemax(Int))
     STI.depth_first_search(e -> Extents.intersects(e, q), tree) do i
@@ -371,19 +379,46 @@ function GrI.fallback_vertex_table(m::Manifold, grid)
     cell_verts = Int[]
     cell_ptr[1] = 1
     for i in 1:n
+        k0 = length(cell_verts) + 1
         for p in GrI.cell_corners(grid, i)
             v = get!(index, _qkey(m, p, q)) do
                 push!(points, p)
                 length(points)
             end
+            # a repeated corner (the pole of a lon/lat cell) is one vertex, listed once
+            length(cell_verts) >= k0 && cell_verts[end] == v && continue
             push!(cell_verts, v)
         end
+        length(cell_verts) > k0 && cell_verts[end] == cell_verts[k0] && pop!(cell_verts)
         cell_ptr[i+1] = length(cell_verts) + 1
     end
     nv = length(points)
     incid = [Int[] for _ in 1:nv]
     for i in 1:n, k in cell_ptr[i]:cell_ptr[i+1]-1
         push!(incid[cell_verts[k]], i)
+    end
+    # An interior point where only two cells meet (H3 class III edges bent at an
+    # icosahedron edge) is not a vertex of the cell complex: drop it, renumber.
+    keep = trues(nv)
+    _pn(c, v) = (r = cell_ptr[c]:cell_ptr[c+1]-1; k = findfirst(j -> cell_verts[j] == v, r);
+        L = length(r); (cell_verts[r[mod1(k - 1, L)]], cell_verts[r[mod1(k + 1, L)]]))
+    for v in 1:nv
+        length(incid[v]) == 2 || continue
+        (a, b) = incid[v]; pa = _pn(a, v); pb = _pn(b, v)
+        (pa[1] == pb[2] && pb[1] == pa[2]) && (keep[v] = false)
+    end
+    if !all(keep)
+        newid = cumsum(keep)
+        points = points[keep]
+        cv = Int[]; cp = similar(cell_ptr); cp[1] = 1
+        for i in 1:n
+            for k in cell_ptr[i]:cell_ptr[i+1]-1
+                keep[cell_verts[k]] && push!(cv, newid[cell_verts[k]])
+            end
+            cp[i+1] = length(cv) + 1
+        end
+        cell_verts, cell_ptr, incid = cv, cp, incid[keep]
+        nv = length(points)
     end
     vert_ptr = Vector{Int}(undef, nv + 1)
     vert_cells = Int[]

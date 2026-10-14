@@ -146,6 +146,8 @@ function adapt_healpix!(Healpix::Module)
         GrI.isgrid(::Type{<:HM}) = true
         GrI.ncells(m::HM) = length(m)
         GrI.treeify(m::HM) = Trees.treeify(GO.Spherical(), m)
+        const HExt = Base.get_extension(CR, :ConservativeRegriddingHealpixExt)
+        GrI.split_weight(n::Union{HExt.HealpixRootNode,HExt.HealpixTreeNode}) = Trees.split_weight(n)
         GrI.cellshape(::HM) = GrI.SimpleCells()
         GrI.cell_geometry(m::HM, i::Integer) = Trees.getcell(GrI.treeify(m), Int(i))
         function GrI.cell_boundary(m::HM, i::Integer)

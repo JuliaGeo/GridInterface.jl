@@ -77,8 +77,18 @@ function hierarchy_chunks(grid, l::Integer)
     has_sorted_subtrees(sys) || throw(ArgumentError("hierarchy_chunks needs sorted subtrees"))
     l <= lg || throw(ArgumentError("chunk level $l is finer than the grid's level $lg"))
     out = Subset{typeof(grid),UnitRange{Int},eltype(_cells_at(sys, l))}[]
+    # A subset of a level grid (a `Subset`, a DGG `PartialGrid`) numbers its own
+    # cells: map each descendant range of the parent level to the window of the
+    # subset's ascending parent positions it covers, and drop empty windows.
+    complete = gridrelation(grid) isa NoParent
+    ks = complete ? nothing : _subset_keys(grid)
     for c in _cells_at(sys, l)
-        push!(out, Subset(grid, descendant_range(sys, c, lg); root=c))
+        r = descendant_range(sys, c, lg)
+        if !complete
+            r = searchsortedfirst(ks, first(r)):searchsortedlast(ks, last(r))
+            isempty(r) && continue
+        end
+        push!(out, Subset(grid, r; root=c))
     end
     return out
 end

@@ -31,8 +31,9 @@ hierarchical system, [`level(c)`](@ref level) (a binding law: the level is how a
 mixed-level collection finds the grid that owns a cell's geometry).
 
 Ids of existing packages that cannot subtype this (DGG's ids subtype
-`DiscreteGlobalGrids.AbstractCellIndex`) still work everywhere: every verb takes
-ids untyped. `iscellindex(T)` reports either kind.
+`DiscreteGlobalGrids.AbstractCellIndex`) must add the typed-id geometry forms
+(`cell_boundary(grid, c)`, ...) themselves: the generic typed-id forms dispatch
+on this supertype, not on `iscellindex`.
 """
 abstract type AbstractCellIndex end
 
@@ -216,5 +217,9 @@ Index(::Type{T}) where {T} = Index{Type{T}}(T)
 Position `i` of `grid` expressed in the space `sel` selects.
 """
 toindex(grid, i::Integer, ::Index{Local}) = Int(i)
-toindex(grid, i::Integer, ::Index{Global}) = globalindex(grid, cellindex(grid, i))
+toindex(grid, i::Integer, ::Index{Global}) = _toglobal(gridrelation(grid), grid, i)::Int
+# A subset already stores its parent positions: no id round trip, no `Nothing`.
+_toglobal(::NoParent, grid, i) = Int(i)
+_toglobal(::ParentGrid, grid, i) = globalindex(grid, cellindex(grid, i))   # provider subsets (DGG PartialGrid)
+_toglobal(::ParentSystem, grid, i) = _globalindex(ParentSystem(), grid, i)
 toindex(grid, i::Integer, ::Index{Type{T}}) where {T} = cellindex(grid, i, T)

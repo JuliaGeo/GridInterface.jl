@@ -7,8 +7,11 @@ families (identity, tree, subsets and chunks, cell geometry and point location,
 neighbours, dual grid, hierarchical systems); a grid opts into each.
 
 The contract is duck-typed: a grid is any object that answers
-[`ncells`](@ref), [`best_manifold`](@ref) and either [`cell_boundary`](@ref)
-(single-ring grids) or [`cell_geometry`](@ref). [`AbstractGrid`](@ref) is an
+[`ncells`](@ref), [`best_manifold`](@ref) and either [`cellshape`](@ref) (a
+`SingleRing` value) plus [`cell_boundary`](@ref), or [`cell_geometry`](@ref)
+(the default shape is `GeneralCells`, which refuses `cell_boundary`). On
+`Spherical()` the points must be `UnitSphericalPoint`s: plain 3-tuples are read
+as (lon, lat, z) by GeometryOps and refused by ConservativeRegridding's clipper. [`AbstractGrid`](@ref) is an
 optional convenience supertype; types that already have a supertype elsewhere
 (DGG grids, CR curvilinear grids) join by defining methods and
 `isgrid(::Type{T}) = true`.
@@ -52,7 +55,7 @@ export Index, Local, Global
 export CellShape, Polygonal, SingleRing, ConvexCells, SimpleCells, GeneralCells, cellshape
 export cell_geometry, cell_boundary, cell_corners, cell_centroid, cell_area, cell_extent, best_manifold
 export Tessellation, Tessellating, Overlapping, tessellation
-export cellat, location_is_analytic
+export cellat, cell_contains, location_is_analytic
 # --- tree
 export treeify, subtree, GridAndTree, split_weight, extent_is_expensive, query, query_region, grid_extent
 # --- subsets and chunks
