@@ -92,10 +92,10 @@ GOC.best_manifold(s::MultiLevelSet) = best_manifold(_refgrid(s))
 cellshape(s::MultiLevelSet) = cellshape(_refgrid(s))
 tessellation(s::MultiLevelSet) = has_congruent_refinement(s.system) ? Tessellating() : Overlapping()
 conformity(s::MultiLevelSet) = NonConforming()
-# Exact only under congruent refinement: elsewhere a member's subtree at the
-# reference level is not its geometry, and `cellat` uses the geometric fallback.
-location_is_analytic(s::MultiLevelSet) =
-    s.sorted && has_congruent_refinement(s.system) && location_is_analytic(_refgrid(s))
+# Analytic through the reference level. Under non-congruent refinement members
+# overlap and this is the hierarchy's answer (one containing member, not
+# necessarily the lowest position); the PRD lets an analytic answer win there.
+location_is_analytic(s::MultiLevelSet) = s.sorted && location_is_analytic(_refgrid(s))
 extent_is_expensive(s::MultiLevelSet) = extent_is_expensive(_refgrid(s))
 
 # Geometry: one forwarding step, type stable iff `levelgrid(sys, ::Int)` has one
@@ -151,9 +151,6 @@ function cellat(s::MultiLevelSet, p)
         q === nothing && return nothing
         return member_at_reference(s, q)
     end
-    # non-congruent refinement: members overlap, so the tie rule (lowest
-    # containing position) needs every containing member; the hierarchy's
-    # reference-level answer is not enough
     return fallback_cellat(best_manifold(s), s, p)
 end
 

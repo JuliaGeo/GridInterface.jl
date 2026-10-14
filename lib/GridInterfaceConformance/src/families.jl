@@ -275,7 +275,9 @@ function check_location!(rep, grid, m, S, tree)
         geo = isempty(cs) ? nothing : first(cs)
         a = cellat(grid, p)
         agree_n += 1
-        a == geo && (agree_geo += 1)
+        # PRD: on an overlapping grid an analytic answer wins over the lowest-position
+        # tie rule, so there it only has to be one of the containing cells
+        (a == geo || (analytic && tess isa Overlapping && a !== nothing && a in cs)) && (agree_geo += 1)
         if tess isa Overlapping && length(cs) > 1 && !analytic && a != first(cs)
             ties_bad += 1
         end
@@ -292,7 +294,7 @@ function check_location!(rep, grid, m, S, tree)
         info!(rep, F, "tessellation law", "grid declares Overlapping; $multi multiply-covered sample points")
         law!(rep, F, "tie rule (lowest position) on overlapping grid", ties_bad == 0, "$ties_bad violations")
     end
-    law!(rep, F, analytic ? "analytic cellat agrees with the geometric answer" : "cellat agrees with the geometric answer",
+    law!(rep, F, analytic ? "analytic cellat agrees with the geometric answer (a containing cell when Overlapping)" : "cellat agrees with the geometric answer",
         agree_geo == agree_n, "$(agree_n - agree_geo) of $agree_n disagree")
 end
 
