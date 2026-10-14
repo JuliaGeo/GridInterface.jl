@@ -77,7 +77,7 @@ end
     winding(grid, connectivity = Vertex()) -> Winding
 
 The order [`neighbors`](@ref) returns. Default: `CounterClockwise()` for a
-single-ring grid answered by the geometric fallback (which sorts by azimuth and
+tessellating single-ring grid answered by the geometric fallback (which sorts by azimuth and
 starts at the neighbour across the edge from corner 1 to corner 2, so Edge
 neighbour `k` lies across edge `(v_k, v_k+1)`), `Unordered()` otherwise.
 
@@ -86,7 +86,9 @@ lies across the edge from `cell_vertices(grid, i)[k]` to the next vertex.
 """
 winding(grid, conn::Connectivity) = _default_winding(cellshape(grid), grid)
 winding(grid) = winding(grid, Vertex())
-_default_winding(::SingleRing, grid) = uses_neighbor_fallback(grid) ? CounterClockwise() : Unordered()
+# (on an overlapping grid "touching" includes overlaps, which have no ring order)
+_default_winding(::SingleRing, grid) =
+    uses_neighbor_fallback(grid) && tessellation(grid) isa Tessellating ? CounterClockwise() : Unordered()
 _default_winding(::CellShape, grid) = Unordered()
 
 "Whether `neighbors` on this grid type resolves to the generic (geometric fallback) method."

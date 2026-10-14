@@ -297,14 +297,23 @@ end
     return SmallInts((i, s.v[1], s.v[2], s.v[3]), s.n + 1)
 end
 @inline _d2(a, b) = (a[1] - b[1])^2 + (a[2] - b[2])^2 + (a[3] - b[3])^2
+# lattice offset of corner k (N, W, S, E) from the pixel's (ix, iy)
+const _HP_COFF = ((1, 1), (0, 1), (0, 0), (1, 0))
 function GrI.vertex_key(g::HPG, i::Integer, k::Integer)
     fan = _hp_fan(g, Int(i), Int(k))
     o = minimum(fan)
     o == i && return GrI.VertexKey(Int(i), Int(k))
-    p = _hp_corner(g, Int(i), Int(k))
     nside = 1 << g.level
-    ix, iy, f = HP.nested_to_xyf(o - 1, nside)
-    cs = HP.pixel_corners(ix, iy, f, nside)
+    ix, iy, f = HP.nested_to_xyf(Int(i) - 1, nside)
+    ox, oy, fo = HP.nested_to_xyf(o - 1, nside)
+    if fo == f          # same face: the corner index follows from the lattice
+        vx, vy = ix + _HP_COFF[k][1], iy + _HP_COFF[k][2]
+        for j in 1:4
+            (ox + _HP_COFF[j][1], oy + _HP_COFF[j][2]) == (vx, vy) && return GrI.VertexKey(o, j)
+        end
+    end
+    p = HP.pixel_corners(ix, iy, f, nside)[k]       # across a face edge: nearest corner
+    cs = HP.pixel_corners(ox, oy, fo, nside)
     j = 1; d = _d2(cs[1], p)
     for jj in 2:4
         dj = _d2(cs[jj], p)

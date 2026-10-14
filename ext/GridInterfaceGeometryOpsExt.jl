@@ -394,7 +394,24 @@ function GrI.fallback_query(m::Manifold, grid, pred::GrI.QueryPredicate)
     r isa SphericalCap && m isa Spherical && return _query_cap(m, grid, pred)
     R = _regionpolys(m, r)
     cands = _candidates(m, grid, r)
+    m isa Spherical && !(pred isa GrI.CentroidIn) && return filter!(i -> _test_banded(m, grid, i, pred, R), cands)
     return filter!(i -> _test(m, grid, i, pred, R), cands)
+end
+# A cell whose extent cap stays clear of the region's boundary is wholly inside
+# or wholly outside: its centroid decides. Only cells in the boundary band pay
+# for the edge-by-edge test.
+function _test_banded(m, grid, i, pred, R)
+    e = cell_extent(grid, i)
+    if e isa SphericalCap && e.radius < π / 2
+        c = _v(e.point); rad = Float64(e.radius)
+        clear = all(poly -> all(ring -> _ring_mindist(ring, c) > rad, poly), R)
+        if clear
+            inside = _in_polys(m, R, c)
+            pred isa GrI.Contains && return false       # a region clear of the cell's cap cannot lie in the cell
+            return inside
+        end
+    end
+    return _test(m, grid, i, pred, R)
 end
 _test(m, grid, i, ::GrI.CentroidIn, R) = _in_polys(m, R, _c(m, cell_centroid(grid, i)))
 function _test(m, grid, i, ::GrI.Intersects, R)
