@@ -84,9 +84,40 @@ end
 GrI.fallback_extent(::Planar, grid, i) = points_box(_cellpoints(grid, i))
 GrI.fallback_extent(::Spherical, grid, i) = points_cap(_cellpoints(grid, i))
 
-function GrI.fallback_centroid(::Planar, grid, i)
-    c = GO.centroid(cell_geometry(grid, i))
-    return (Float64(GI.x(c)), Float64(GI.y(c)))
+# The area centroid when it lies in the cell; otherwise (holes, multipolygons,
+# strongly concave rings) a point on the surface: the midpoint of the widest
+# interior span of a horizontal scanline through the largest part.
+function GrI.fallback_centroid(m::Planar, grid, i)
+    g = cell_geometry(grid, i)
+    c = GO.centroid(g)
+    p = (Float64(GI.x(c)), Float64(GI.y(c)))
+    cellshape(grid) isa ConvexCells && return p
+    GrI.fallback_contains(m, grid, i, p) && return p
+    return _point_on_surface(g)
+end
+
+function _point_on_surface(g)
+    poly = g
+    if GI.trait(g) isa GI.MultiPolygonTrait
+        polys = collect(GI.getgeom(g))
+        poly = polys[argmax([abs(GO.area(GO.Planar(), q)) for q in polys])]
+    end
+    rings = [collect(GI.getpoint(r)) for r in GI.getring(poly)]
+    ys = sort!(unique!([_xy(p)[2] for p in rings[1]]))
+    # scan halfway between the two most separated consecutive vertex heights
+    k = argmax(diff(ys))
+    y = (ys[k] + ys[k+1]) / 2
+    xs = Float64[]
+    for r in rings, j in 1:length(r)
+        (x1, y1) = _xy(r[j]); (x2, y2) = _xy(r[mod1(j + 1, length(r))])
+        (y1 > y) != (y2 > y) && push!(xs, x1 + (y - y1) * (x2 - x1) / (y2 - y1))
+    end
+    sort!(xs)
+    best = 1
+    for j in 1:2:length(xs)-1
+        xs[j+1] - xs[j] > xs[best+1] - xs[best] && (best = j)
+    end
+    return ((xs[best] + xs[best+1]) / 2, y)
 end
 function GrI.fallback_centroid(::Spherical, grid, i)
     s = (0.0, 0.0, 0.0)

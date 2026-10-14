@@ -162,8 +162,11 @@ fr_n(s::MultiLevelSet) = length(s.cells)
 @inline fr_emit(s::MultiLevelSet, k) = k
 @inline fr_extent(s::MultiLevelSet, k) = cell_extent(s, k)
 
-treeify(s::MultiLevelSet; bucket::Integer=1) =
-    s.sorted ? HierarchyCursor(s; bucket) : SelectionCursor(s; bucket)
+# `has_sorted_subtrees` is a type-level fact for every system seen so far, so
+# this branch folds and the return type is concrete.
+treeify(s::MultiLevelSet) = has_sorted_subtrees(s.system) ? HierarchyCursor(s) : SelectionCursor(s)
+treeify(s::MultiLevelSet, bucket::Integer) =
+    has_sorted_subtrees(s.system) ? HierarchyCursor(s; bucket) : SelectionCursor(s; bucket)
 
 function subtree(s::MultiLevelSet, cells::AbstractVector{<:Integer})
     return fallback_subtree(best_manifold(s), s, cells)

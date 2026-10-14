@@ -48,10 +48,12 @@ identity never reach this.
 """
 function vertex_table(grid)
     conformity(grid) isa Conforming || _refuse_dual(grid)
-    lock(_VERTEX_LOCK) do
+    t = lock(_VERTEX_LOCK) do
         get!(() -> fallback_vertex_table(best_manifold(grid), grid), _VERTEX_CACHE, grid)
     end
+    return t::VertexTable{_pointtype(grid)}
 end
+_pointtype(grid) = eltype(Base.promote_op(cell_boundary, typeof(grid), Int))
 
 """
     nvertices(grid) -> Int
@@ -94,12 +96,18 @@ vertex_point(grid, v::Integer) = vertex_table(grid).points[v]
 
 One cell per primal vertex. Its boundary is the centroids of
 `vertex_cells(primal, v)` in order, its centroid is the primal vertex, and it
-inherits the primal manifold. At a vertex with fewer than three cells (the
-outer boundary of an open grid) the vertex itself is inserted so the partial
-polygon has a chance of being non-degenerate; it is declared `SimpleCells`.
+inherits the primal manifold.
+
+At a vertex on the outer boundary of an open grid the fan of cells does not
+close, and the "partial polygon those centroids span" (PRD) is degenerate at
+corners (one centroid) and wound arbitrarily along edges (two centroids). This
+implementation closes the fan the median-dual way instead: the vertex, the
+midpoint of the boundary edge where the fan starts, the centroids in order, the
+midpoint of the boundary edge where it ends. Declared `SimpleCells`.
 """
-struct DualGrid{G} <: AbstractGrid
+struct DualGrid{G,T} <: AbstractGrid
     primal::G
+    table::T       # the primal's fallback VertexTable, or `nothing` when the primal answers analytically
 end
 
 """
@@ -110,18 +118,63 @@ non-conforming grids.
 """
 function dual(grid)
     conformity(grid) isa Conforming || _refuse_dual(grid)
-    return DualGrid(grid)
+    return DualGrid(grid, uses_vertex_fallback(grid) ? vertex_table(grid) : nothing)
 end
 
+"Whether `nvertices` on this grid is answered by the geometric fallback."
+uses_vertex_fallback(grid) = which(nvertices, Tuple{typeof(grid)}).sig.parameters[2] === Any
+
+_nv(d::DualGrid{G,Nothing}) where {G} = nvertices(d.primal)
+_nv(d::DualGrid) = length(d.table.points)
+_vpoint(d::DualGrid{G,Nothing}, v) where {G} = vertex_point(d.primal, v)
+_vpoint(d::DualGrid, v) = @inbounds d.table.points[v]
+_vcells(d::DualGrid{G,Nothing}, v) where {G} = vertex_cells(d.primal, v)
+_vcells(d::DualGrid, v) = (t = d.table; view(t.vert_cells, t.vert_ptr[v]:t.vert_ptr[v+1]-1))
+_cverts(d::DualGrid{G,Nothing}, c) where {G} = cell_vertices(d.primal, c)
+_cverts(d::DualGrid, c) = (t = d.table; view(t.cell_verts, t.cell_ptr[c]:t.cell_ptr[c+1]-1))
+
 Base.parent(d::DualGrid) = d.primal
-ncells(d::DualGrid) = nvertices(d.primal)
+ncells(d::DualGrid) = _nv(d)
 GOC.best_manifold(d::DualGrid) = best_manifold(d.primal)
 cellshape(::DualGrid) = SimpleCells()
+cell_centroid(d::DualGrid, v::Integer) = _vpoint(d, v)
+
+# prev/next vertex of v around cell c (cell rings are CCW)
+function _ring_neighbours(d, c, v)
+    vs = _cverts(d, c)
+    k = findfirst(==(v), vs)
+    n = length(vs)
+    return vs[mod1(k - 1, n)], vs[mod1(k + 1, n)]
+end
+
 function cell_boundary(d::DualGrid, v::Integer)
     1 <= v <= ncells(d) || _throw_bounds(d, v)
-    cs = vertex_cells(d.primal, v)
-    pts = [cell_centroid(d.primal, c) for c in cs]
-    length(pts) < 3 && pushfirst!(pts, vertex_point(d.primal, v))
+    g = d.primal
+    P = typeof(_vpoint(d, v))
+    cs = collect(_vcells(d, v))
+    pn = [_ring_neighbours(d, c, v) for c in cs]
+    # the fan is open iff some cell's "next" edge is nobody's "prev" edge
+    start = findfirst(k -> !any(q -> q[1] == pn[k][2], pn), eachindex(cs))
+    if start === nothing
+        return P[convert(P, cell_centroid(g, c)) for c in cs]
+    end
+    # walk the open fan counter-clockwise from its starting boundary edge
+    order = Int[start]
+    while length(order) < length(cs)
+        prev_edge = pn[order[end]][1]
+        k = findfirst(q -> q[2] == prev_edge, pn)
+        (k === nothing || k in order) && break
+        push!(order, k)
+    end
+    vp = _vpoint(d, v)
+    pts = P[vp, _midpoint(best_manifold(g), vp, _vpoint(d, pn[start][2]))]
+    for k in order
+        push!(pts, convert(P, cell_centroid(g, cs[k])))
+    end
+    push!(pts, _midpoint(best_manifold(g), vp, _vpoint(d, pn[order[end]][1])))
     return pts
 end
-cell_centroid(d::DualGrid, v::Integer) = vertex_point(d.primal, v)
+
+_midpoint(::Planar, a, b) = typeof(a)(((a[1] + b[1]) / 2, (a[2] + b[2]) / 2))
+_midpoint(::Spherical, a, b) = (s = (a[1] + b[1], a[2] + b[2], a[3] + b[3]); r = sqrt(s[1]^2 + s[2]^2 + s[3]^2);
+    typeof(a)(s[1] / r, s[2] / r, s[3] / r))
