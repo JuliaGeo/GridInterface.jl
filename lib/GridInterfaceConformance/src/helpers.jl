@@ -69,6 +69,36 @@ end
 ring_is_ccw(m::Planar, ring, c) = _signed_area(m, ring) > 0
 ring_mean(ring) = (s = reduce((a, b) -> a .+ b, (_v(p) for p in ring)); s ./ sqrt(_dot(s, s)))
 ring_is_ccw(m::Spherical, ring, c) = _turning(m, ring, c) > π
+# A point to wind about: the centroid, unless it lies on the ring (an open dual
+# fan has its vertex on the ring), then the ring's own mean.
+function ccw_centre(m, ring, c)
+    m isa Spherical || return c
+    n = length(ring)
+    for k in 1:n
+        a = _v(ring[k]); b = _v(ring[mod1(k + 1, n)]); p = _v(c)
+        nab = _cross(a, b); nn = _norm(nab)
+        nn == 0 && continue
+        abs(_dot(nab, p)) <= 1e-12 * nn && _dot(_cross(a, p), nab) >= 0 && _dot(_cross(p, b), nab) >= 0 &&
+            return _usp(ring_mean(ring))
+    end
+    return c
+end
+_close(::Planar, p, q; tol=1e-9) = (a = _xy(p); b = _xy(q); abs(a[1] - b[1]) + abs(a[2] - b[2]) <= tol * max(1.0, abs(a[1]) + abs(a[2])))
+_close(::Spherical, p, q; tol=1e-9) = _norm(_v(p) .- _v(q)) <= tol
+# is `sub` (in order, cyclically) a subsequence of `ring` under approximate equality?
+function is_cyclic_subsequence(m, sub, ring)
+    isempty(sub) && return true
+    n = length(ring)
+    for s in 1:n
+        _close(m, ring[s], sub[1]) || continue
+        k = 1
+        for j in 0:n-1
+            k <= length(sub) && _close(m, ring[mod1(s + j, n)], sub[k]) && (k += 1)
+        end
+        k > length(sub) && return true
+    end
+    return false
+end
 
 function ring_is_convex(::Planar, ring; tol=1e-12)
     n = length(ring)
@@ -132,10 +162,16 @@ function fallback_verbs(grid)
     for (f, args) in ((GrI.cell_centroid, (G, Int)), (GrI.cell_area, (G, Int)),
                       (GrI.cell_extent, (G, Int)), (GrI.cell_geometry, (G, Int)),
                       (GrI.cellat, (G, Any)), (GrI.treeify, (G,)),
-                      (GrI.cellindex, (G, Int)), (GrI.localindex, (G, typeof(cellindex(grid, 1)))),
                       (GrI.cell_contains, (G, Int, Any)), (GrI.nvertices, (G,)),
                       (GrI.cell_vertices, (G, Int)), (GrI.vertex_cells, (G, Int)))
         _is_generic(f, args) && push!(out, nameof(f))
+    end
+    # On a grid whose ids are its positions the generic identity is the intended
+    # answer, not a fallback: list cellindex/localindex only for typed ids.
+    c1 = ncells(grid) > 0 ? cellindex(grid, 1) : 1
+    if !(c1 isa Integer)
+        _is_generic(GrI.cellindex, (G, Int)) && push!(out, :cellindex)
+        _is_generic(GrI.localindex, (G, typeof(c1))) && push!(out, :localindex)
     end
     # keyword-argument functions: check the underlying positional method
     _is_generic(GrI.neighbors, (G, Int)) && push!(out, :neighbors)

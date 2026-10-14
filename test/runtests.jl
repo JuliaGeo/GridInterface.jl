@@ -169,8 +169,94 @@ end
     @test (@allocated treeify(m)) == 0
 end
 
+@testset "round-one revisions" begin
+    # required set of four, on the sphere, with collapsing pole corners
+    g = MinLonLat(12, 6)
+    @test sum(cell_area(g, i) for i in 1:ncells(g)) ≈ 4π rtol = 1e-10
+    @test length(cell_boundary(g, 1)) == 4 && length(cell_corners(g, 1)) == 3   # south-pole cell
+    @test length(cell_corners(g, 20)) == 4
+    buf = UnitSphericalPoint{Float64}[]
+    @test cell_boundary!(buf, g, 20) == collect(cell_boundary(g, 20)) && buf == collect(cell_boundary(g, 20))
+    @test edgekind(g) isa GeodesicEdges
+    @test cellsize(g) > 0
+    @test cellat(g, cell_centroid(g, 30)) == 30
+    @test cellat(g, GO.UnitSphereFromGeographic()((-179.0, 89.0))) == 61          # north-pole fan
+    # the antipode of a cell is outside it (signed winding)
+    c = cell_centroid(g, 30)
+    @test !cell_contains(g, 30, UnitSphericalPoint(-c[1], -c[2], -c[3]))
+    # spherical types are enforced
+    @test_throws ArgumentError cellat(g, (10.0, 20.0))
+    @test_throws ArgumentError cell_extent(TupleLonLat(), 1)
+    rep = check_grid(TupleLonLat())
+    @test any(r -> r.status === :fail && occursin("UnitSphericalPoint", r.law), rep.results)
+    # dual: pole vertices are 12-cell fans, everything closes on a global grid
+    @test nvertices(g) == 12 * 5 + 2
+    pole = cell_vertices(g, 1)[1]
+    @test length(vertex_cells(g, pole)) == 12 && !vertex_isopen(g, pole)
+    @test !any(v -> vertex_isopen(g, v), 1:nvertices(g))
+    D = dual(g)
+    @test sum(v -> cell_area(D, v), 1:ncells(D)) ≈ 4π rtol = 1e-8
+    @test cellat(D, vertex_point(g, 7)) == 7
+    k = vertex_key(g, 7)
+    @test vertex_index(g, k) == 7 && k isa VertexKey
+    @test [vertex_index(g, kk) for kk in cell_vertex_keys(g, 20)] == collect(cell_vertices(g, 20))
+    # GridAndTree, split_weight
+    gt = GridAndTree(g)
+    @test split_weight(gt) == split_weight(gt.tree)
+    @test cellat(gt, cell_centroid(g, 3)) == 3
+
+    # neighbours: disc, maxring, subsets clipped and unclipped
+    p = TinyPlanar(5, 5)
+    @test neighbors(p, 13, 1) |> sort == sort(neighbors(p, 13))
+    @test length(neighbors(p, 13, 2)) == 24
+    @test neighbors(p, 1; connectivity=Edge()) == [2, 6]                     # aligned CCW from edge (c1, c2)
+    s = subset(p, [7, 8, 9, 12, 13, 14])
+    @test collect(neighbors(s, 5)) |> sort == [1, 2, 3, 4, 6]
+    loc = collect(neighbors(s, 5, Index(Local())))
+    @test length(loc) == 8 && count(==(OUTSIDE), loc) == 3
+    @test collect(neighbors(s, 5, Index(Global()))) == collect(neighbors(p, 13))
+    @test halo(s) == halo(p, [7, 8, 9, 12, 13, 14])
+    @test collect(interior(subset(p, collect(1:25)))) == 1:25
+    bag = PolygonBag()
+    @test neighbors(bag, 1) == [2]                                            # touching
+    @test winding(bag) isa Unordered
+
+    # collections: three spaces, algebra, cellsat, query predicates
+    a = subset(p, [1, 2, 3, 4]); b = subset(p, [3, 4, 5, 6])
+    @test parentpositions(union(a, b)) == 1:6
+    @test parentpositions(intersect(a, b)) == [3, 4]
+    @test parentpositions(setdiff(a, b)) == [1, 2]
+    @test parentpositions(grow(subset(p, [13]), 1)) == [7, 8, 9, 12, 13, 14, 17, 18, 19]
+    @test cellsat(bag, (1.5, 1.5)) == [1, 2]
+    box = Extents.Extent(X=(0.5, 2.0), Y=(0.5, 2.0))
+    @test query(p, Intersects(box)) == [1, 2, 3, 6, 7, 8, 11, 12, 13]
+    @test query(p, Within(Extents.Extent(X=(0.0, 2.0), Y=(0.0, 1.0)))) == [1, 2]
+    @test query(p, CentroidIn(box)) == [1, 2, 6, 7]
+    @test query(p, Contains(Extents.Extent(X=(0.2, 0.4), Y=(0.2, 0.4)))) == [1]
+    q = query(g, Intersects(Extents.Extent(X=(-10.0, 10.0), Y=(-10.0, 10.0))))
+    @test !isempty(q) && all(i -> 2 <= (i - 1) ÷ 12 <= 3, q)
+    @test query(g, CentroidIn(Extents.Extent(X=(-180.0, 180.0), Y=(60.0, 90.0)))) == 61:72
+
+    # chunks: lazy, chunkat, subsets and multi-level sets
+    sys = QuadSystem(6); lg = levelgrid(sys, 4)
+    ch = chunks(lg, 1)
+    @test length(ch) == 4 && chunkat(ch, 200) == 4 && 200 in parentpositions(ch[4])
+    @test (@allocated chunks(lg, 2)) == 0
+    sub = subset(lg, 60:140)
+    sc = chunks(sub, 1)
+    @test sum(ncells, sc) == 81
+    m = MultiLevelSet(sys, [QuadCell(1, 0), QuadCell(2, 4), QuadCell(2, 5), QuadCell(2, 6), QuadCell(2, 7), QuadCell(1, 2), QuadCell(1, 3)])
+    mc = chunks(m, 2)
+    @test sum(ncells, mc) == 7 && length(mc) == 7                              # a coarse member is its own chunk
+    em = expand_to_reference(m)
+    @test ncells(em) == sum(c -> length(descendant_range(sys, c, m.reference_level)), m.cells) && parent(em) isa QuadLevelGrid
+    @test leaves(subtree(lg, subset(lg, 17:32))) == 17:32
+    @test system(lg) === sys && level(lg) == 4
+end
+
 @testset "conformance" begin
     for (name, g) in (("TinyPlanar", TinyPlanar(4, 3)), ("TinyCubeSphere", TinyCubeSphere(3)),
+                      ("MinLonLat (four methods)", MinLonLat(12, 6)),
                       ("Subset of TinyPlanar", subset(TinyPlanar(4, 3), [1, 2, 5, 6, 7])))
         rep = check_grid(g; name)
         @test !any(r -> r.status === :fail, rep.results)
@@ -182,7 +268,7 @@ end
     st = family_status(rep)
     @test st[:performance] === :fail
     @test all(f -> st[f] !== :fail, setdiff(keys(st), [:performance]))
-    @test st[:dual] === :pass && st[:neighbors] === :skip   # dual: refusal is the law that passes
+    @test st[:dual] === :pass && st[:neighbors] === :pass   # dual: refusal is the law that passes; touching neighbours
     # The dual of a fallback-vertex grid builds each ring per call: everything
     # passes except the allocation-free extent sweep.
     rep = check_grid(dual(TinyCubeSphere(2)); name="dual of TinyCubeSphere")

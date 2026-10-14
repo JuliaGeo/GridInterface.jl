@@ -6,7 +6,8 @@ struct NotAScheme end   # an id scheme no grid declares
 Run every family's laws that `grid` claims. Never throws.
 """
 function check_grid(grid; name::AbstractString=string(nameof(typeof(grid))), nsamples::Int=64,
-        full_tree_limit::Int=200_000, area_rtol::Real=1e-3, quiet::Bool=true)
+        full_tree_limit::Int=200_000, area_rtol::Real=1e-3, total_area_limit::Int=2_000_000,
+        quiet::Bool=true)
     rep = ConformanceReport(String(name))
     n = ncells(grid)
     m = best_manifold(grid)
@@ -16,8 +17,15 @@ function check_grid(grid; name::AbstractString=string(nameof(typeof(grid))), nsa
     metric!(rep, "manifold", string(nameof(typeof(m))))
     metric!(rep, "cellshape", string(nameof(typeof(cellshape(grid)))))
     check_identity!(rep, grid, n, S)
+    # spherical type contract first: every fallback refuses other types, so a
+    # grid that breaks it would otherwise fail every family with the same error
+    if m isa Spherical && n > 0 && !check_spherical_types!(rep, grid, S)
+        skip!(rep, :tree, "spherical type contract broken (see geometry)")
+        quiet || print_report(rep)
+        return rep
+    end
     tree = check_tree!(rep, grid, n, m, S, full_tree_limit)
-    check_geometry!(rep, grid, m, S, area_rtol)
+    check_geometry!(rep, grid, m, S, area_rtol, total_area_limit)
     check_location!(rep, grid, m, S, tree)
     check_neighbors!(rep, grid, m, S)
     check_dual!(rep, grid, m, S)
@@ -114,6 +122,28 @@ function _nonmember(grid, n)
     return nothing
 end
 
+# ------------------------------------------------------------------ spherical types
+# Points on a spherical manifold are `UnitSphericalPoint`, extents `SphericalCap`.
+function check_spherical_types!(rep, grid, S)
+    F = :geometry
+    ok = guarded!(rep, F, "spherical points are UnitSphericalPoint") do
+        bad = Any[]
+        for i in S
+            pts = cellshape(grid) isa SingleRing ? cell_boundary(grid, i) : all_points(cell_geometry(grid, i))
+            for p in pts
+                p isa UnitSphericalPoint || (push!(bad, (i, typeof(p))); break)
+            end
+        end
+        isempty(bad), isempty(bad) ? "" : "cell $(bad[1][1]) has $(bad[1][2]); convert with GeometryOps.UnitSphereFromGeographic()"
+    end
+    ok || return false
+    guarded!(rep, F, "spherical centroid is UnitSphericalPoint, extent is SphericalCap") do
+        bad = [i for i in S if !(cell_centroid(grid, i) isa UnitSphericalPoint && cell_extent(grid, i) isa SphericalCap)]
+        isempty(bad), isempty(bad) ? "" : "cell $(bad[1]): $(typeof(cell_centroid(grid, bad[1]))), $(typeof(cell_extent(grid, bad[1])))"
+    end
+    return true
+end
+
 # ------------------------------------------------------------------ tree
 function check_tree!(rep, grid, n, m, S, full_tree_limit)
     F = :tree
@@ -139,8 +169,18 @@ function check_tree!(rep, grid, n, m, S, full_tree_limit)
         _walk_extents!(grid, m, tree, nested_bad, geom_bad, visited, 400)
         geom_bad[] == 0, "$(geom_bad[]) violations over $(visited[]) nodes"
     end
-    law!(rep, F, "every node's extent contains its children's extents (nested; PRD table)",
-        nested_bad[] == 0, "$(nested_bad[]) non-nested parent/child extent pairs over $(visited[]) nodes")
+    # Only R-trees promise nested extents; a cursor's node extent covers its
+    # descendants' geometry (law above) but a child's cap may poke out of it.
+    if nameof(typeof(tree)) === :RTree
+        law!(rep, F, "every node's extent contains its children's extents (R-tree)",
+            nested_bad[] == 0, "$(nested_bad[]) non-nested parent/child extent pairs over $(visited[]) nodes")
+    else
+        info!(rep, F, "nested child extents (promised by R-trees only)",
+            "$(nested_bad[]) non-nested pairs over $(visited[]) nodes")
+    end
+    guarded!(rep, F, "split_weight forwards through GridAndTree") do
+        GrI.split_weight(GrI.GridAndTree(grid, tree)) == GrI.split_weight(tree)
+    end
     guarded!(rep, F, "subtree(grid, cells) emits parent positions") do
         cells = S[1:2:end]
         ls = sort!(collect_leaves(subtree(grid, cells)))
@@ -189,9 +229,10 @@ end
 _cellpts(grid, i) = cellshape(grid) isa SingleRing ? collect(cell_boundary(grid, i)) : all_points(cell_geometry(grid, i))
 
 # ------------------------------------------------------------------ geometry
-function check_geometry!(rep, grid, m, S, area_rtol)
+function check_geometry!(rep, grid, m, S, area_rtol, total_area_limit=2_000_000)
     F = :geometry
     sh = cellshape(grid)
+    n = ncells(grid)
     guarded!(rep, F, "cell_geometry is polygonal") do
         all(i -> GI.trait(cell_geometry(grid, i)) isa Union{GI.PolygonTrait,GI.MultiPolygonTrait}, S)
     end
@@ -212,8 +253,26 @@ function check_geometry!(rep, grid, m, S, area_rtol)
             isempty(bad), "cells $(first(bad, 5))"
         end
         guarded!(rep, F, "ring is counter-clockwise") do
-            bad = [i for i in S if !ring_is_ccw(m, collect(cell_boundary(grid, i)), cell_centroid(grid, i))]
+            bad = Int[]
+            for i in S
+                b = collect(cell_boundary(grid, i))
+                ring_is_ccw(m, b, ccw_centre(m, b, cell_centroid(grid, i))) || push!(bad, i)
+            end
             isempty(bad), "$(length(bad)) of $(length(S)) cells, e.g. $(first(bad, 5))"
+        end
+        guarded!(rep, F, "cell_corners: a subsequence of the ring, no consecutive repeats") do
+            bad = Int[]
+            for i in S
+                cs = collect(GrI.cell_corners(grid, i)); b = collect(cell_boundary(grid, i))
+                ok = length(cs) >= 3 && is_cyclic_subsequence(m, cs, b) &&
+                     all(k -> !_close(m, cs[k], cs[mod1(k + 1, length(cs))]; tol=1e-12), eachindex(cs))
+                ok || push!(bad, i)
+            end
+            isempty(bad), "cells $(first(bad, 5))"
+        end
+        guarded!(rep, F, "cell_boundary! fills a buffer with the ring") do
+            buf = similar(collect(cell_boundary(grid, S[1])), 0)
+            all(i -> collect(GrI.cell_boundary!(buf, grid, i)) == collect(cell_boundary(grid, i)), S)
         end
     else
         skip!(rep, F, "ring laws: grid declares $(nameof(typeof(sh)))")
@@ -243,9 +302,36 @@ function check_geometry!(rep, grid, m, S, area_rtol)
             worst <= area_rtol, "max rel diff $worst"
         end
     end
+    guarded!(rep, F, "cellsize is positive and finite") do
+        h = GrI.cellsize(grid)
+        metric!(rep, "cellsize", h)
+        h > 0 && isfinite(h), "got $h"
+    end
+    _check_total_area!(rep, grid, m, n, total_area_limit)
     guarded!(rep, F, "cell_extent contains the cell") do
         bad = [i for i in S if !all(p -> extent_contains_point(m, cell_extent(grid, i), p), _cellpts(grid, i))]
         isempty(bad), "cells $(first(bad, 5))"
+    end
+end
+
+# A global tessellating grid on the sphere covers it: areas sum to 4πr².
+function _check_total_area!(rep, grid, m, n, limit)
+    F = :geometry
+    m isa Spherical || return
+    want = 4π * Float64(m.radius)^2
+    if !(tessellation(grid) isa Tessellating)
+        return
+    elseif n > limit
+        return info!(rep, F, "total area 4πr² (global grids)", "skipped: ncells = $n > $limit")
+    end
+    guarded!(rep, F, GrI.isglobal(grid) ? "total area equals 4πr² (global grid)" : "total area at most 4πr²") do
+        A = 0.0
+        for i in 1:n
+            A += cell_area(grid, i)
+        end
+        metric!(rep, "total area / 4πr²", A / want)
+        GrI.isglobal(grid) ? (isapprox(A, want; rtol=1e-6), "sum = $(A / want) × 4πr²") :
+            (A <= want * (1 + 1e-6), "sum = $(A / want) × 4πr²")
     end
 end
 
@@ -294,6 +380,31 @@ function check_location!(rep, grid, m, S, tree)
         info!(rep, F, "tessellation law", "grid declares Overlapping; $multi multiply-covered sample points")
         law!(rep, F, "tie rule (lowest position) on overlapping grid", ties_bad == 0, "$ties_bad violations")
     end
+    if cellshape(grid) isa SingleRing
+        guarded!(rep, F, "cellat(p) contains p, sampled near edges") do
+            bad = 0; tot = 0
+            for i in S
+                c = cell_centroid(grid, i)
+                b = collect(GrI.cell_corners(grid, i))
+                for k in eachindex(b)
+                    mid = _toward(m, b[k], b[mod1(k + 1, length(b))], 0.5)
+                    for t in (0.99, 0.9999)
+                        p = _toward(m, c, mid, t)
+                        tot += 1
+                        j = cellat(grid, p)
+                        (j !== nothing && GrI.cell_contains(grid, j, p)) || (bad += 1)
+                    end
+                end
+            end
+            metric!(rep, "near-edge cellat disagreement", "$bad / $tot")
+            bad == 0, "$bad of $tot near-edge points ($(round(100bad/tot; digits=2)) %)"
+        end
+    end
+    if tess isa Overlapping
+        guarded!(rep, F, "cellsat returns every containing cell") do
+            all(((i, p),) -> collect(GrI.cellsat(grid, p)) == containing_cells(grid, tree, m, p), pts[1:min(end, 64)])
+        end
+    end
     law!(rep, F, analytic ? "analytic cellat agrees with the geometric answer (a containing cell when Overlapping)" : "cellat agrees with the geometric answer",
         agree_geo == agree_n, "$(agree_n - agree_geo) of $agree_n disagree")
 end
@@ -303,8 +414,8 @@ function check_neighbors!(rep, grid, m, S)
     F = :neighbors
     sh = cellshape(grid)
     provided = !(:neighbors in rep.fallbacks)
-    if !(sh isa SingleRing) && !provided
-        return skip!(rep, F, "GeneralCells grid without its own neighbors")
+    if !(sh isa GrI.Polygonal) && !provided
+        return skip!(rep, F, "non-polygonal grid without its own neighbors")
     end
     if GrI.neighbors_are_analytic(grid) && !provided
         law!(rep, F, "declared analytic neighbours are provided (not the fallback)", false,
@@ -353,6 +464,34 @@ function check_neighbors!(rep, grid, m, S)
             info!(rep, F, "winding($(nameof(typeof(conn))))", string(nameof(typeof(w))))
         end
     end
+    guarded!(rep, F, "disc(i, k) is rings 1:k concatenated; maxneighbors(grid, k) bounds it") do
+        ok = true; detail = ""
+        for i in SS[1:min(end, 8)], k in 1:2
+            d = collect(neighbors(grid, i, k))
+            ok &= allunique(d) && !(i in d)
+            ok &= Set(d) == Set(vcat((ring(grid, i, j) for j in 1:k)...))
+            mx = GrI.maxneighbors(grid, k, Vertex())
+            if mx !== nothing && length(d) > mx
+                ok = false; detail = "disc $k of cell $i has $(length(d)) > maxneighbors $mx"
+            end
+        end
+        ok, detail
+    end
+    if cellshape(grid) isa SingleRing && conformity(grid) isa Conforming && winding(grid, Edge()) isa CounterClockwise
+        guarded!(rep, F, "alignment: Edge neighbour k lies across edge (corner k, corner k+1)") do
+            # each Edge neighbour holds both ends of one edge of i (corners are
+            # shared exactly); edge indices increase, and equal 1:n on a full cell
+            bad = Int[]
+            for i in SS
+                js = nb(i, Edge()); cs = collect(GrI.cell_corners(grid, i)); n = length(cs)
+                es = [something(findfirst(e -> GrI.cell_contains(grid, j, cs[e]) && GrI.cell_contains(grid, j, cs[mod1(e + 1, n)]), 1:n), 0)
+                      for j in js]
+                ok = all(>(0), es) && issorted(es) && allunique(es) && (length(js) != n || es == 1:n)
+                ok || push!(bad, i)
+            end
+            isempty(bad), "$(length(bad)) of $(length(SS)) cells, e.g. $(first(bad, 5))"
+        end
+    end
     guarded!(rep, F, "rings partition the disc (k ≤ 2)") do
         ok = true
         for i in SS[1:min(end, 8)]
@@ -397,8 +536,39 @@ function check_dual!(rep, grid, m, S)
         end
         ok
     end
-    guarded!(rep, F, "cell_vertices follow cell_corners") do
-        all(i -> length(GrI.cell_vertices(grid, i)) == length(GrI.cell_corners(grid, i)), S)
+    guarded!(rep, F, "cell_vertices are a subsequence of cell_corners") do
+        bad = [i for i in S if !is_cyclic_subsequence(m, [GrI.vertex_point(grid, v) for v in GrI.cell_vertices(grid, i)],
+                                                      collect(GrI.cell_corners(grid, i)))]
+        isempty(bad), "cells $(first(bad, 5))"
+    end
+    guarded!(rep, F, "vertex keys round-trip; dense numbering derived from them") do
+        all(v -> GrI.vertex_index(grid, GrI.vertex_key(grid, v)) == v, sample_positions(nv, length(S))) &&
+        all(i -> [GrI.vertex_index(grid, k) for k in GrI.cell_vertex_keys(grid, i)] == collect(GrI.cell_vertices(grid, i)), S)
+    end
+    guarded!(rep, F, "vertex_isopen: open iff the fan does not close; none on a global grid") do
+        Vs = sample_positions(nv, 4length(S))
+        nopen = count(v -> GrI.vertex_isopen(grid, v), Vs)
+        metric!(rep, "open vertices (sampled)", "$nopen / $(length(Vs))")
+        GrI.isglobal(grid) ? (nopen == 0, "$nopen open vertices on a global grid") : true
+    end
+    guarded!(rep, F, "dual ring point k corresponds to fan cell k") do
+        D = GrI.dual(grid); bad = 0
+        for v in sample_positions(nv, length(S))
+            GrI.vertex_isopen(grid, v) && continue
+            cs = collect(GrI.vertex_cells(grid, v)); b = collect(cell_boundary(D, v))
+            length(cs) == length(b) || (bad += 1; continue)
+            all(k -> _close(m, b[k], cell_centroid(grid, cs[k]); tol=1e-6) || GrI.cell_contains(grid, cs[k], b[k]), eachindex(cs)) || (bad += 1)
+        end
+        bad == 0, "$bad vertices"
+    end
+    if m isa Spherical && GrI.isglobal(grid)
+        guarded!(rep, F, "the dual of a global grid tiles the sphere (areas sum to 4πr²)") do
+            D = GrI.dual(grid)
+            A = sum(v -> cell_area(D, v), 1:nv)
+            want = 4π * Float64(m.radius)^2
+            metric!(rep, "dual total area / 4πr²", A / want)
+            isapprox(A, want; rtol=1e-6), "sum = $(A / want) × 4πr²"
+        end
     end
     D = GrI.dual(grid)
     guarded!(rep, F, "dual cells are valid CCW rings (≥ 3 points)") do
@@ -409,7 +579,7 @@ function check_dual!(rep, grid, m, S)
                 degenerate += 1; push!(bad, v); continue
             end
             # open fans put the vertex itself on the ring, so wind about the ring's own mean
-            ring_is_ccw(m, b, m isa Spherical ? ring_mean(b) : GrI.vertex_point(grid, v)) || push!(bad, v)
+            ring_is_ccw(m, b, ccw_centre(m, b, GrI.vertex_point(grid, v))) || push!(bad, v)
         end
         metric!(rep, "dual degenerate cells (sampled)", degenerate)
         isempty(bad), "$(length(bad)) bad dual cells (degenerate: $degenerate), e.g. $(first(bad, 5))"
@@ -448,16 +618,58 @@ function check_subsets!(rep, grid, m, S)
         end
         ok
     end
+    guarded!(rep, F, "subset algebra agrees with set algebra on parent positions") do
+        n = ncells(grid)
+        a = GrI.subset(grid, S[1:2:end]); b = GrI.subset(grid, S[1:3:end])
+        pa, pb = collect(GrI.parentpositions(a)), collect(GrI.parentpositions(b))
+        collect(GrI.parentpositions(union(a, b))) == sort!(union(pa, pb)) &&
+        collect(GrI.parentpositions(intersect(a, b))) == sort!(intersect(pa, pb)) &&
+        collect(GrI.parentpositions(setdiff(a, b))) == sort!(setdiff(pa, pb))
+    end
+    if cellshape(grid) isa SingleRing || !(:neighbors in rep.fallbacks)
+        guarded!(rep, F, "subset neighbours: clipped plain form, unclipped Index forms") do
+            s = GrI.subset(grid, S[1:2:end]); ok = true
+            for k in 1:min(ncells(s), 6)
+                p = GrI.parentpositions(s)[k]
+                full = collect(neighbors(grid, p))
+                loc = collect(neighbors(s, k, GrI.Index(GrI.Local())))
+                ok &= length(loc) == length(full)
+                ok &= all(((j, l),) -> l == something(localindex(s, cellindex(grid, j)), GrI.OUTSIDE), zip(full, loc))
+                ok &= collect(neighbors(s, k)) == filter(!=(GrI.OUTSIDE), loc)
+                rel isa GrI.NoParent && (ok &= collect(neighbors(s, k, GrI.Index(GrI.Global()))) == full)
+            end
+            ok
+        end
+    end
     ch = GrI.chunks(grid)
     if ch === nothing
         info!(rep, F, "chunks", "none declared")
     else
-        guarded!(rep, F, "chunks partition the grid") do
-            seen = zeros(Int, ncells(grid))
-            for c in ch, k in 1:ncells(c)
-                seen[localindex(grid, cellindex(c, k))] += 1
+        metric!(rep, "nchunks", length(ch))
+        if ncells(grid) <= 10_000_000
+            guarded!(rep, F, "chunks partition the grid") do
+                seen = zeros(Int, ncells(grid))
+                for c in ch, k in 1:ncells(c)
+                    seen[localindex(grid, cellindex(c, k))] += 1
+                end
+                all(==(1), seen), "counts $(extrema(seen))"
             end
-            all(==(1), seen), "counts $(extrema(seen))"
+        end
+        guarded!(rep, F, "chunkat agrees with chunk membership (sampled)") do
+            bad = 0
+            for j in sample_positions(length(ch), 16)
+                c = ch[j]
+                for k in sample_positions(ncells(c), 8)
+                    GrI.chunkat(grid, localindex(grid, cellindex(c, k))) == j || (bad += 1)
+                end
+            end
+            bad == 0, "$bad cells"
+        end
+        guarded!(rep, F, "chunk extents are cheap") do
+            c = ch[1]; GrI.grid_extent(c)
+            t = @elapsed for j in sample_positions(length(ch), 16); GrI.grid_extent(ch[j]); end
+            metric!(rep, "chunk extent μs", round(t / 16 * 1e6; digits=2))
+            t / 16 < 1e-3, "$(t/16) s per chunk extent"
         end
         guarded!(rep, F, "each chunk's extent covers its cells") do
             bad = 0

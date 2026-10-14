@@ -174,8 +174,9 @@ GrI.neighbors_are_analytic(::QuadLevelGrid) = true
 GrI.maxneighbors(::QuadLevelGrid, ::GrI.Vertex) = 8
 GrI.maxneighbors(::QuadLevelGrid, ::GrI.Edge) = 4
 GrI.winding(::QuadLevelGrid, ::GrI.Connectivity) = GrI.CounterClockwise()
-const _VOFF = ((1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1))
-const _EOFF = ((1, 0), (0, 1), (-1, 0), (0, -1))
+# counter-clockwise from the neighbour across edge 1 (the bottom edge), aligned with the corners
+const _VOFF = ((0, -1), (1, -1), (1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1))
+const _EOFF = ((0, -1), (1, 0), (0, 1), (-1, 0))
 function GrI.neighbors(g::QuadLevelGrid, i::Integer; connectivity::GrI.Connectivity=GrI.Vertex())
     ix, iy = _demorton(Int64(i - 1)); k = 1 << g.level
     offs = connectivity isa GrI.Edge ? _EOFF : _VOFF
@@ -187,3 +188,31 @@ function GrI.neighbors(g::QuadLevelGrid, i::Integer; connectivity::GrI.Connectiv
     return out
 end
 GrI.chunks(g::QuadLevelGrid) = g.level >= 1 ? GrI.hierarchy_chunks(g, 1) : nothing
+
+# ---------------------------------------------------------------------------
+# 5. The four-method spherical grid: lon/lat cells with great-circle edges.
+#    Pole cells repeat the pole point (their corners collapse to three).
+# ---------------------------------------------------------------------------
+struct MinLonLat <: GrI.AbstractGrid
+    nlon::Int
+    nlat::Int
+end
+GrI.ncells(g::MinLonLat) = g.nlon * g.nlat
+GOC.best_manifold(::MinLonLat) = GOC.Spherical(; radius=1.0)
+GrI.cellshape(::MinLonLat) = GrI.SimpleCells()
+function GrI.cell_boundary(g::MinLonLat, i::Integer)
+    1 <= i <= GrI.ncells(g) || throw(BoundsError(g, i))
+    a = (i - 1) % g.nlon; b = (i - 1) ÷ g.nlon
+    x0 = -180 + 360a / g.nlon; x1 = -180 + 360(a + 1) / g.nlon
+    y0 = -90 + 180b / g.nlat; y1 = -90 + 180(b + 1) / g.nlat
+    f = GO.UnitSphereFromGeographic()
+    return SRing((f((x0, y0)), f((x1, y0)), f((x1, y1)), f((x0, y1))))
+end
+
+# The same grid handing out lon/lat tuples on a spherical manifold: refused.
+struct TupleLonLat <: GrI.AbstractGrid end
+GrI.ncells(::TupleLonLat) = 4
+GOC.best_manifold(::TupleLonLat) = GOC.Spherical(; radius=1.0)
+GrI.cellshape(::TupleLonLat) = GrI.SimpleCells()
+GrI.cell_boundary(::TupleLonLat, i::Integer) =
+    SRing(((10.0i, 0.0), (10.0i + 10, 0.0), (10.0i + 10, 10.0), (10.0i, 10.0)))

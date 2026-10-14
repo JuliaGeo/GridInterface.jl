@@ -24,6 +24,32 @@ function check_system(sys; name::AbstractString=string(nameof(typeof(sys))), lev
         all(l -> (g = GrI.levelgrid(sys, l); all(i -> GrI.level(cellindex(g, i)) == l, sample_positions(ncells(g), 8))),
             Ls[1:min(end, levels_checked + 1)])
     end
+    guarded!(rep, F, "level grids answer system and level") do
+        all(l -> (g = GrI.levelgrid(sys, l); GrI.system(g) == sys && GrI.level(g) == l), Ls[1:min(end, levels_checked + 1)])
+    end
+    guarded!(rep, F, "ids are AbstractCellIndex (or declared through iscellindex)") do
+        c = cellindex(GrI.levelgrid(sys, l0), 1)
+        GrI.iscellindex(c), "$(typeof(c)) is neither an AbstractCellIndex nor declared with iscellindex"
+    end
+    guarded!(rep, F, "Extents.union of node extents is defined and covers both") do
+        rc = collect(GrI.rootcells(sys))
+        length(rc) < 2 && return true
+        a, b = GrI.node_extent(sys, rc[1]), GrI.node_extent(sys, rc[end])
+        u = Extents.union(a, b)
+        m = best_manifold(GrI.levelgrid(sys, l0))
+        extent_contains_extent(m, u, a) && extent_contains_extent(m, u, b), "union $(u)"
+    end
+    guarded!(rep, F, "chunks(levelgrid, l) partitions by ancestor (sampled)") do
+        l = Ls[min(end, 2)]
+        lg = GrI.levelgrid(sys, l)
+        ch = GrI.chunks(lg, l0)
+        ok = length(ch) == ncells(GrI.levelgrid(sys, l0))
+        for i in sample_positions(ncells(lg), 32)
+            j = GrI.chunkat(ch, i)
+            ok &= i in GrI.parentpositions(ch[j])
+        end
+        ok
+    end
     # bushy walk: roots and their descendants for `depth` levels
     walk = _bushy(sys, depth, nsamples)
     guarded!(rep, F, "parent/children inverses; children ascending, one level down") do

@@ -594,12 +594,34 @@ function _neighbors_in(m, grid, tree, i, conn, ::SingleRing)
         (k == 0 || (conn isa Edge && k < 2)) || push!(out, j)
         nothing
     end
-    # counter-clockwise, starting at the neighbour across the edge (corner 1, corner 2)
-    c = cell_centroid(grid, i)
+    # Counter-clockwise along the ring, starting across the edge (corner 1,
+    # corner 2): each neighbour gets the slot it touches on cell i's corners
+    # (edge k → k + ½, corner k → k), so Edge neighbour k lies across edge k.
+    # Ties (several cells at one corner of a non-conforming cell) by azimuth about
+    # the centroid, measured from the opposite side of the slot's point.
     cs = cell_corners(grid, i)
-    a0 = length(cs) >= 2 ? _azimuth(m, c, _mid(m, cs[1], cs[2])) : 0.0
-    az = [mod2pi(_azimuth(m, c, cell_centroid(grid, j)) - a0 + 1e-9) for j in out]
-    return out[sortperm(az)]
+    n = length(cs)
+    c = cell_centroid(grid, i)
+    key = map(out) do j
+        sl = _slot(m, cs, cell_boundary(grid, j), tol)
+        k = floor(Int, sl)
+        ref = sl == k ? cs[k] : _mid(m, cs[k], cs[mod1(k + 1, n)])
+        (mod(sl - 1.5, n), mod2pi(_azimuth(m, c, cell_centroid(grid, j)) - _azimuth(m, c, ref) + π))
+    end
+    return out[sortperm(key)]
+end
+function _slot(m, cs, rb, tol)
+    n = length(cs)
+    on = [_on_boundary(m, rb, cs[k], tol) for k in 1:n]
+    for k in 1:n
+        on[k] && on[mod1(k + 1, n)] && return k + 0.5
+    end
+    k = findfirst(on)
+    k === nothing || return Float64(k)
+    for q in rb, k in 1:n                          # a corner of j inside an edge of i
+        _onseg(m, cs[k], cs[mod1(k + 1, n)], q, tol) && return k + 0.5
+    end
+    return 1.5
 end
 # general cells: "touching" (shared boundary or overlapping area); unordered
 function _neighbors_in(m, grid, tree, i, conn, ::GrI.CellShape)
