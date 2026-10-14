@@ -19,6 +19,16 @@ an ancestor of another (checked in O(n) on sorted systems). Geometry forwards
 to `levelgrid(sys, level(c))`; identity is the typed id; it answers `system`
 and refuses `globalindex`; its tessellation trait is the system's refinement
 trait; it is non-conforming (hanging vertices) so it has no dual.
+
+Two regrid behaviours, both available:
+
+- **direct**: pass the set itself; each member is one column (one polygon).
+  New behaviour, 2-7x faster; differs from the expansion where a coarse
+  member's polygon differs from the union of its fine descendants
+  (non-congruent systems, densified boundaries).
+- **expanded**: pass [`expand_to_reference`](@ref)`(set)`, the subset of the
+  reference level holding every member's descendants; bit-identical to today's
+  expansion path. [`aggregation_pairs`](@ref) maps its columns back to members.
 """
 struct MultiLevelSet{S,ID} <: AbstractGrid
     system::S
@@ -90,6 +100,8 @@ _refgrid(s::MultiLevelSet) = levelgrid(s.system, s.reference_level)
 
 GOC.best_manifold(s::MultiLevelSet) = best_manifold(_refgrid(s))
 cellshape(s::MultiLevelSet) = cellshape(_refgrid(s))
+edgekind(s::MultiLevelSet) = edgekind(_refgrid(s))
+cell_geometry_is_expensive(s::MultiLevelSet) = cell_geometry_is_expensive(_refgrid(s))
 tessellation(s::MultiLevelSet) = has_congruent_refinement(s.system) ? Tessellating() : Overlapping()
 conformity(s::MultiLevelSet) = NonConforming()
 # Analytic through the reference level. Under non-congruent refinement members
@@ -100,7 +112,7 @@ extent_is_expensive(s::MultiLevelSet) = extent_is_expensive(_refgrid(s))
 
 # Geometry: one forwarding step, type stable iff `levelgrid(sys, ::Int)` has one
 # concrete return type for every level.
-for f in (:cell_boundary, :cell_geometry, :cell_centroid, :cell_area, :cell_extent)
+for f in (:cell_boundary, :cell_geometry, :cell_centroid, :cell_area, :cell_extent, :cell_corners)
     @eval Base.@propagate_inbounds function $f(s::MultiLevelSet, i::Integer)
         c = cellindex(s, i)
         return $f(_lg(s, c), c)
@@ -170,8 +182,85 @@ treeify(s::MultiLevelSet) = has_sorted_subtrees(s.system) ? HierarchyCursor(s) :
 treeify(s::MultiLevelSet, bucket::Integer) =
     has_sorted_subtrees(s.system) ? HierarchyCursor(s; bucket) : SelectionCursor(s; bucket)
 
-function subtree(s::MultiLevelSet, cells::AbstractVector{<:Integer})
-    return fallback_subtree(best_manifold(s), s, cells)
+_fr_extent_is_expensive(s::MultiLevelSet) = extent_is_expensive(s)
+
+"""
+    MLSFrontier(set, positions, emit)
+
+A window of a sorted multi-level set (ascending set positions): the frontier
+behind `treeify(subset(set, …))` (emits local positions) and
+`subtree(set, cells)` (emits set positions). Window mode, O(1) to build.
+"""
+struct MLSFrontier{M,V<:AbstractVector{Int},B}
+    s::M
+    pos::V
+end
+MLSFrontier(s, pos, emit::Bool) = MLSFrontier{typeof(s),typeof(pos),emit}(s, pos)
+fr_keys(F::MLSFrontier) = view(F.s.keys, F.pos)
+fr_system(F::MLSFrontier) = F.s.system
+fr_ref(F::MLSFrontier) = F.s.reference_level
+fr_n(F::MLSFrontier) = length(F.pos)
+@inline fr_level(F::MLSFrontier, k) = level(@inbounds F.s.cells[F.pos[k]])
+@inline fr_id(F::MLSFrontier, k) = @inbounds F.s.cells[F.pos[k]]
+@inline fr_emit(F::MLSFrontier{M,V,true}, k) where {M,V} = @inbounds F.pos[k]
+@inline fr_emit(F::MLSFrontier{M,V,false}, k) where {M,V} = k
+@inline fr_extent(F::MLSFrontier, k) = cell_extent(F.s, @inbounds F.pos[k])
+_fr_extent_is_expensive(F::MLSFrontier) = extent_is_expensive(F.s)
+
+function _mls_cursor(m::MultiLevelSet, pos, emit::Bool; root=nothing, bucket=1)
+    m.sorted || return fallback_subtree(best_manifold(m), m, pos)
+    return HierarchyCursor(MLSFrontier(m, pos, emit); root, bucket)
+end
+
+treeify(s::Subset{<:MultiLevelSet}) =
+    s.parent.sorted ? _mls_cursor(s.parent, s.cells, false; root=s.root) : _default_treeify(s)
+subtree(m::MultiLevelSet, cells::AbstractVector{<:Integer}) = _mls_cursor(m, cells, true)
+subtree(m::MultiLevelSet, s::Subset) = parent(s) === m ? _mls_cursor(m, s.cells, true; root=s.root) :
+    subtree(m, parentpositions(s))
+
+"""
+    chunks(set::MultiLevelSet, l) -> AbstractVector of subsets
+
+The members grouped by their level-`l` ancestor (one window of the sorted
+layout per ancestor, rooted at it); a member at or above level `l` is its own
+chunk, rooted at itself. Sorted systems only.
+"""
+function hierarchy_chunks(m::MultiLevelSet, l::Integer)
+    m.sorted || throw(ArgumentError("chunks of a multi-level set need sorted subtrees"))
+    sys, ref = m.system, m.reference_level
+    ID = eltype(m.cells)
+    starts = Int[]; roots = ID[]
+    n = length(m.cells)
+    k = 1
+    while k <= n
+        c = m.cells[k]
+        push!(starts, k)
+        if level(c) <= l
+            push!(roots, c)
+            k += 1
+        else
+            a = ancestor(sys, c, l)
+            r = descendant_range(sys, a, ref)
+            push!(roots, a)
+            k = searchsortedlast(m.keys, last(r), k, n, Base.Order.Forward) + 1
+        end
+    end
+    push!(starts, n + 1)
+    return WindowChunks{typeof(m),ID}(m, starts, roots)
+end
+
+"""
+    expand_to_reference(set::MultiLevelSet) -> Subset
+
+The **expanded** regrid behaviour: the subset of `levelgrid(system, reference
+level)` holding every member's descendants, in ascending position. Its
+positions are a lazy concatenation of `descendant_range`s (storage O(members));
+its tree is the hierarchy cursor. Sorted systems only.
+"""
+function expand_to_reference(m::MultiLevelSet)
+    m.sorted || throw(ArgumentError("expand_to_reference needs sorted subtrees"))
+    rs = UnitRange{Int}[descendant_range(m.system, c, m.reference_level) for c in m.cells]
+    return Subset(_refgrid(m), RangeCat(rs))
 end
 
 """
@@ -179,6 +268,7 @@ end
 
 The 0/1 expansion of members to their reference-level descendants, as
 `(rows, cols)` index vectors: row = reference-level position, col = member.
+(Size of the expansion, by definition.)
 """
 function aggregation_pairs(s::MultiLevelSet)
     s.sorted || throw(ArgumentError("needs sorted subtrees"))
@@ -188,4 +278,3 @@ function aggregation_pairs(s::MultiLevelSet)
     end
     return rows, cols
 end
-_fr_extent_is_expensive(s::MultiLevelSet) = extent_is_expensive(s)

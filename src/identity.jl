@@ -149,38 +149,57 @@ end
 
 # ---------------------------------------------------------------------------
 # Relations a collection can have: none, a parent grid, a parent system.
+# Three index spaces follow from them:
+#   local     1:ncells(grid)                    every grid
+#   parent    parentpositions(s)[i]             a subset, in the grid it was cut from
+#   complete  globalindex(s, c)                 a subset, in the complete grid at the
+#                                               root of its parent chain
+# For a subset of a complete grid, parent and complete coincide. For a subset of
+# a subset they differ: chunk assembly into the subset's own matrix uses the
+# parent space, halo exchange with the full grid uses the complete space.
 # ---------------------------------------------------------------------------
 
 """
     abstract type GridRelation
 
-What "position in the parent" means for a grid. [`NoParent`](@ref) (a complete
-grid), [`ParentGrid`](@ref) (a subset: answers `parent` and `globalindex`), or
-[`ParentSystem`](@ref) (a multi-level set: answers `system`, not
-`globalindex`). Name chosen here; the PRD lists the three relations without
-naming a trait.
+What "position in the parent" means for a grid: [`NoParent`](@ref),
+[`ParentGrid`](@ref) or [`ParentSystem`](@ref), answered by
+[`gridrelation`](@ref).
 """
 abstract type GridRelation end
+"A complete grid: local positions are the only positions."
 struct NoParent <: GridRelation end
+"A subset of a parent grid: answers `parent`, [`parentpositions`](@ref) and [`globalindex`](@ref)."
 struct ParentGrid <: GridRelation end
+"A multi-level set: answers [`system`](@ref), refuses [`globalindex`](@ref)."
 struct ParentSystem <: GridRelation end
 
+"""
+    gridrelation(grid) -> GridRelation
+
+`NoParent()` (default), `ParentGrid()` or `ParentSystem()`.
+"""
 gridrelation(grid) = NoParent()
 
 """
     system(grid)
 
-The hierarchical system a grid's cells are drawn from (level grids, subsets of
-a level, multi-level sets), or `nothing`.
+The hierarchical system a grid's cells are drawn from, or `nothing`.
+**Obligation** for the level grids of a hierarchical system (together with
+[`level(grid)`](@ref level)): it is how the generic hierarchy cursor, chunks
+and multi-level sets find the hierarchy. Subsets and multi-level sets answer it
+too.
 """
 system(grid) = nothing
 
 """
     globalindex(grid, c) -> Union{Int,Nothing}
 
-Position of id `c` in the complete grid: for a complete grid the same as
-[`localindex`](@ref); for a subset, the position in its parent's complete grid.
-A multi-level set refuses (its members have no single parent position).
+Position of id `c` in the **complete** grid: for a complete grid the same as
+[`localindex`](@ref); for a subset (at any nesting depth) the position in the
+complete grid at the root of its parent chain. For the position in the
+immediate parent use [`parentpositions`](@ref). A multi-level set refuses (its
+members have no single complete-grid position).
 """
 globalindex(grid, c) = _globalindex(gridrelation(grid), grid, c)
 _globalindex(::NoParent, grid, c) = localindex(grid, c)
@@ -195,16 +214,38 @@ _globalindex(::ParentSystem, grid, c) = throw(ArgumentError(
 # ---------------------------------------------------------------------------
 
 abstract type IndexSpace end
-"Local positions `1:ncells(grid)`."
+"""
+    Local()
+
+Index space selector: local positions `1:ncells(grid)`. On a subset,
+`neighbors(s, i, Index(Local()))` keeps every parent neighbour slot and puts
+`0` (the outside sentinel, [`OUTSIDE`](@ref)) where the neighbour is not a member.
+"""
 struct Local <: IndexSpace end
-"Positions in the complete grid (parent space for a subset)."
+"""
+    Global()
+
+Index space selector: positions in the complete grid. On a subset,
+`neighbors(s, i, Index(Global()))` is the **unclipped** neighbourhood: every
+neighbour, inside or outside the subset, in complete-grid positions.
+"""
 struct Global <: IndexSpace end
+
+"""
+    OUTSIDE = 0
+
+The sentinel `neighbors(s, i, Index(Local()))` puts in a slot whose neighbour
+lies outside subset `s`.
+"""
+const OUTSIDE = 0
 
 """
     Index(Local()), Index(Global()), Index(T)
 
 The "needs" selector a stencil uses to ask for neighbour indices in one space:
-local positions, complete-grid positions, or typed ids of scheme `T`.
+local positions (with [`OUTSIDE`](@ref) for non-members), complete-grid
+positions, or typed ids of scheme `T`. The selector forms never clip: slot `k`
+is the same neighbour in every space.
 """
 struct Index{S}
     space::S
@@ -218,7 +259,6 @@ Position `i` of `grid` expressed in the space `sel` selects.
 """
 toindex(grid, i::Integer, ::Index{Local}) = Int(i)
 toindex(grid, i::Integer, ::Index{Global}) = _toglobal(gridrelation(grid), grid, i)::Int
-# A subset already stores its parent positions: no id round trip, no `Nothing`.
 _toglobal(::NoParent, grid, i) = Int(i)
 _toglobal(::ParentGrid, grid, i) = globalindex(grid, cellindex(grid, i))   # provider subsets (DGG PartialGrid)
 _toglobal(::ParentSystem, grid, i) = _globalindex(ParentSystem(), grid, i)
