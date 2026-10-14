@@ -121,6 +121,11 @@ function check_system(sys; name::AbstractString=string(nameof(typeof(sys))), lev
     return rep
 end
 
+"""
+    test_system(sys; kw...) -> ConformanceReport
+
+[`check_system`](@ref), emitted as a `@testset` with one `@test` per law.
+"""
 function test_system(sys; kw...)
     rep = check_system(sys; kw...)
     emit_tests(rep)

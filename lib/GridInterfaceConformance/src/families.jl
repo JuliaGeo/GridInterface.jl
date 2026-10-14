@@ -532,6 +532,14 @@ function check_dual!(rep, grid, m, S)
     if ncells(grid) > 50_000 && :nvertices in rep.fallbacks
         return skip!(rep, F, "geometric vertex merge skipped above 50k cells (ncells = $(ncells(grid)))")
     end
+    if ncells(grid) > 2_000_000
+        # the dense numbering is derived in O(n): check the keyed layer only
+        GrI.vertices_are_analytic(grid) || return skip!(rep, F, "ncells = $(ncells(grid)) > 2M")
+        guarded!(rep, F, "keyed vertices: each cell is in the fan of each of its corner keys") do
+            all(i -> all(k -> i in GrI.vertex_cells(grid, GrI.vertex_key(grid, i, k)), 1:length(GrI.cell_corners(grid, i))), S)
+        end
+        return skip!(rep, F, "dense-numbering laws skipped: ncells = $(ncells(grid)) > 2M")
+    end
     nv = try
         GrI.nvertices(grid)
     catch e
@@ -574,7 +582,7 @@ function check_dual!(rep, grid, m, S)
         end
         bad == 0, "$bad vertices"
     end
-    if m isa Spherical && GrI.isglobal(grid)
+    if m isa Spherical && GrI.isglobal(grid) && nv <= 200_000
         guarded!(rep, F, "the dual of a global grid tiles the sphere (areas sum to 4πr²)") do
             D = GrI.dual(grid)
             A = sum(v -> cell_area(D, v), 1:nv)

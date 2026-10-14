@@ -61,7 +61,23 @@ function clear_caches! end
 # clipper, so the core refuses it up front, here, at the fallback boundary.
 # ---------------------------------------------------------------------------
 
+"""
+    UnitSphericalPoint
+
+The point type of every spherical grid: a unit 3-vector (GeometryOps'
+`UnitSpherical.UnitSphericalPoint`). Boundaries, corners, centroids and query
+points on a `Spherical` manifold must be these; convert lon/lat with
+`GeometryOps.UnitSphereFromGeographic()`.
+"""
 const UnitSphericalPoint = UnitSpherical.UnitSphericalPoint
+"""
+    SphericalCap
+
+The extent type of every spherical grid (GeometryOps' `UnitSpherical.SphericalCap`):
+a centre `UnitSphericalPoint` and an angular radius. `cell_extent`, `node_extent`
+and chunk extents on a `Spherical` manifold must be caps; `Extents.union` and
+`Extents.intersects` are defined on them.
+"""
 const SphericalCap = UnitSpherical.SphericalCap
 
 "Whether manifold `m` is curved (spherical or ellipsoidal): the unit-sphere types are required."

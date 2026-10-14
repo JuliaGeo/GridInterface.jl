@@ -274,21 +274,11 @@ _border(::GridRelation, grid, conn) = Int[]
     interior(s::Subset; connectivity = Vertex())
 
 Ascending own positions of members whose every neighbour is a member: the
-complement of [`border`](@ref) in `1:length(positions)`. A complete grid's
-interior is `1:ncells(grid)` (a range).
+complement of [`border`](@ref) in `1:length(positions)`, lazy (storage is the
+border's). A complete grid's interior is `1:ncells(grid)` (a range).
 """
 function interior(P, positions::AbstractVector{<:Integer}; connectivity::Connectivity=Vertex())
-    b = border(P, positions; connectivity)
-    out = Int[]
-    j = 1
-    for k in 1:length(positions)
-        if j <= length(b) && b[j] == k
-            j += 1
-        else
-            push!(out, k)
-        end
-    end
-    return out
+    return Complement(length(positions), border(P, positions; connectivity))
 end
 interior(s::Subset; connectivity::Connectivity=Vertex()) = interior(s.parent, s.cells; connectivity)
 interior(grid; connectivity::Connectivity=Vertex()) = _interior(gridrelation(grid), grid, connectivity)

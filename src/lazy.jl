@@ -96,3 +96,33 @@ function Base.getindex(r::RangeCat, i::Int)
     return first(r.ranges[k]) + (i - 1 - r.offsets[k])
 end
 Base.issorted(::RangeCat) = true
+
+"""
+    Complement(n, excluded)
+
+Lazy ascending `setdiff(1:n, excluded)` for a strictly ascending `excluded`:
+O(length(excluded)) storage, `getindex` by binary search. What `interior`
+returns, so a large subset's interior costs only its border.
+"""
+struct Complement{V<:AbstractVector{Int}} <: AbstractVector{Int}
+    n::Int
+    excluded::V
+end
+Base.size(c::Complement) = (c.n - length(c.excluded),)
+Base.IndexStyle(::Type{<:Complement}) = IndexLinear()
+function Base.getindex(c::Complement, k::Int)
+    @boundscheck checkbounds(c, k)
+    b = c.excluded
+    # j = number of excluded values below the answer: the largest j with b[j] - j < k
+    lo, hi = 0, length(b)
+    while lo < hi
+        mid = (lo + hi + 1) >> 1
+        if @inbounds(b[mid]) - mid < k
+            lo = mid
+        else
+            hi = mid - 1
+        end
+    end
+    return k + lo
+end
+Base.issorted(::Complement) = true

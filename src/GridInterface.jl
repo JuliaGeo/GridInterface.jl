@@ -38,7 +38,16 @@ module GridInterface
 # GeometryOps.UnitSpherical, re-exposed by a one-file shim package that stands in
 # for SpatialTreeInterface.jl and the unit-sphere split. `split_weight` is owned
 # there. Nothing else from GeometryOps is imported anywhere under src/.
-using SpatialTreeInterfaceShim: STI, UnitSpherical
+using SpatialTreeInterfaceShim: STI
+import SpatialTreeInterfaceShim
+"""
+    UnitSpherical
+
+GeometryOps' unit-sphere module (points, caps, arcs), re-exposed through the
+`SpatialTreeInterfaceShim` until the spherical types move to a light package.
+See [`UnitSphericalPoint`](@ref) and [`SphericalCap`](@ref).
+"""
+const UnitSpherical = SpatialTreeInterfaceShim.UnitSpherical
 import SpatialTreeInterfaceShim: split_weight
 # -------------------------------------------------------------------------------
 
@@ -71,7 +80,7 @@ export cell_geometry, cell_boundary, cell_boundary!, cell_corners, cell_centroid
 export cellsize, cell_geometry_is_expensive, isglobal
 export Tessellation, Tessellating, Overlapping, tessellation
 export cellat, cellsat, cell_contains, location_is_analytic
-export UnitSpherical, UnitSphericalPoint, SphericalCap
+export UnitSphericalPoint, SphericalCap   # (GridInterface.UnitSpherical: the module itself)
 # --- tree
 export treeify, subtree, GridAndTree, split_weight, extent_is_expensive, leaf_capacity, grid_extent
 export query, query_candidates, query_region, QueryPredicate, Intersects, Within, Contains, CentroidIn

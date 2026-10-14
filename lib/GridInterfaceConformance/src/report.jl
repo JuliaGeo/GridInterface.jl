@@ -5,6 +5,14 @@ struct LawResult
     detail::String
 end
 
+"""
+    ConformanceReport
+
+The result of [`check_grid`](@ref) or [`check_system`](@ref): `name`, one
+`LawResult` per law in `results` (family, law, `:pass`/`:fail`/`:skip`/`:info`,
+detail), the verbs answered by generic fallbacks in `fallbacks`, and measured
+`metrics`. Summarise with [`family_status`](@ref) and [`print_report`](@ref).
+"""
 struct ConformanceReport
     name::String
     results::Vector{LawResult}
@@ -58,6 +66,12 @@ function family_status(rep::ConformanceReport)
     return out
 end
 
+"""
+    print_report([io], rep::ConformanceReport; verbose = false)
+
+Print the family status line, every failed, skipped and informational law
+(every law when `verbose`), the fallbacks answering, and the metrics.
+"""
 function print_report(io::IO, rep::ConformanceReport; verbose=false)
     println(io, "== ", rep.name, " ==")
     st = family_status(rep)
