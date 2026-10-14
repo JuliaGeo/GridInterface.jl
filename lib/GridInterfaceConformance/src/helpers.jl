@@ -166,6 +166,8 @@ function fallback_verbs(grid)
                       (GrI.cell_vertices, (G, Int)), (GrI.vertex_cells, (G, Int)))
         _is_generic(f, args) && push!(out, nameof(f))
     end
+    # analytic vertices: the generic dense verbs derive from the provider's keys
+    GrI.vertices_are_analytic(grid) && filter!(f -> !(f in (:nvertices, :cell_vertices, :vertex_cells)), out)
     # On a grid whose ids are its positions the generic identity is the intended
     # answer, not a fallback: list cellindex/localindex only for typed ids.
     c1 = ncells(grid) > 0 ? cellindex(grid, 1) : 1
