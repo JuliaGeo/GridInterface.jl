@@ -104,6 +104,17 @@ _cell_boundary(::SingleRing, grid, i) = _missing_boundary(grid)
 _cell_boundary(::CellShape, grid, i) = _refuse_boundary(grid)
 
 """
+    cell_corners(grid, i) -> AbstractVector of points
+
+The corner vertices of cell `i`: [`cell_boundary`](@ref) with any densification
+points left out, same order. Defaults to `cell_boundary`. Vertex identity and
+the dual are built on corners, not on boundary points: a system that densifies
+curved edges (HEALPix, ISEA4R, A5) would otherwise turn every densification
+point into a two-cell "vertex". Not in the PRD; borrowed from DGG.
+"""
+cell_corners(grid, i::Integer) = cell_boundary(grid, i)
+
+"""
     cell_geometry(grid, i)
 
 Cell `i` as a GeoInterface polygonal geometry (polygon, possibly with holes, or

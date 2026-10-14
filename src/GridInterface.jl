@@ -50,7 +50,7 @@ export AbstractCellIndex, ncells, cellindex, cellindextypes, reindex, localindex
 export Index, Local, Global
 # --- geometry and location
 export CellShape, Polygonal, SingleRing, ConvexCells, SimpleCells, GeneralCells, cellshape
-export cell_geometry, cell_boundary, cell_centroid, cell_area, cell_extent, best_manifold
+export cell_geometry, cell_boundary, cell_corners, cell_centroid, cell_area, cell_extent, best_manifold
 export Tessellation, Tessellating, Overlapping, tessellation
 export cellat, location_is_analytic
 # --- tree

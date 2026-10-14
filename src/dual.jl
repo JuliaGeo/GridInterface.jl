@@ -53,7 +53,7 @@ function vertex_table(grid)
     end
     return t::VertexTable{_pointtype(grid)}
 end
-_pointtype(grid) = eltype(Base.promote_op(cell_boundary, typeof(grid), Int))
+_pointtype(grid) = eltype(Base.promote_op(cell_corners, typeof(grid), Int))
 
 """
     nvertices(grid) -> Int
@@ -67,7 +67,7 @@ nvertices(grid) = length(vertex_table(grid).points)
     cell_vertices(grid, i) -> AbstractVector{Int}
 
 Vertex numbers of cell `i`, in the same counter-clockwise order as
-[`cell_boundary`](@ref).
+[`cell_corners`](@ref) (which is `cell_boundary` unless the grid densifies).
 """
 function cell_vertices(grid, i::Integer)
     t = vertex_table(grid)

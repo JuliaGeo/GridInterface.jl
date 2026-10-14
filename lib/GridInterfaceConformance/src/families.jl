@@ -395,8 +395,8 @@ function check_dual!(rep, grid, m, S)
         end
         ok
     end
-    guarded!(rep, F, "cell_vertices follow cell_boundary") do
-        all(i -> length(GrI.cell_vertices(grid, i)) == length(cell_boundary(grid, i)), S)
+    guarded!(rep, F, "cell_vertices follow cell_corners") do
+        all(i -> length(GrI.cell_vertices(grid, i)) == length(GrI.cell_corners(grid, i)), S)
     end
     D = GrI.dual(grid)
     guarded!(rep, F, "dual cells are valid CCW rings (≥ 3 points)") do

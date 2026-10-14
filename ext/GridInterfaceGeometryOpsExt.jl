@@ -364,14 +364,14 @@ function GrI.fallback_vertex_table(m::Manifold, grid)
         e = GrI.grid_extent(grid)
         q *= max(e.X[2] - e.X[1], e.Y[2] - e.Y[1])
     end
-    P = typeof(first(cell_boundary(grid, 1)))
+    P = typeof(first(GrI.cell_corners(grid, 1)))
     points = P[]
     index = Dict{Any,Int}()
     cell_ptr = Vector{Int}(undef, n + 1)
     cell_verts = Int[]
     cell_ptr[1] = 1
     for i in 1:n
-        for p in cell_boundary(grid, i)
+        for p in GrI.cell_corners(grid, i)
             v = get!(index, _qkey(m, p, q)) do
                 push!(points, p)
                 length(points)
