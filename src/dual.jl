@@ -12,8 +12,14 @@
 #    canonical owner cell (the lowest position meeting at the vertex). A
 #    provider with analytic vertices (`vertices_are_analytic`) names them
 #    locally in O(1), with no table.
-#  - the dense numbering `1:nvertices(grid)`, derived from the keys (an O(n)
-#    count of owned corners, cached) or read from the fallback vertex table.
+#  - the dense numbering `1:nvertices(grid)`: the provider's own
+#    (`vertex_numbering_is_analytic`), derived from the keys (an O(n) count of
+#    owned corners), or read from the fallback vertex table.
+#
+# Neither precomputation is cached here: `vertex_table` and `vertex_numbering`
+# build per call, and the caller holds the result through `GridAndVertices`
+# (which the dense verbs read) or `dual` (which stores it in the DualGrid).
+# A provider with its own numbering needs neither, and nothing is built for it.
 # ===========================================================================
 
 """
@@ -63,15 +69,30 @@ Base.isless(a::VertexKey, b::VertexKey) = isless((a.cell, a.corner), (b.cell, b.
 Whether the grid names its vertices itself through keys: it defines
 [`vertex_key`](@ref)`(grid, i, k)` and [`vertex_cells`](@ref)`(grid, key)` in
 O(1) with no table, and the dense numbering is derived. Default `false`: the
-geometric fallback merges corners once into a cached table.
+geometric fallback merges corners into a [`VertexTable`](@ref).
 """
 vertices_are_analytic(grid) = false
 
 """
+    vertex_numbering_is_analytic(grid) -> Bool
+
+Whether the grid answers the dense vertex verbs itself in O(1), by index
+arithmetic or its own connectivity, so no numbering or table is ever built
+for it. With analytic keys it defines `nvertices`, `vertex_key(grid, v)`,
+and `vertex_index(grid, key)`; without keys it defines `nvertices`,
+`cell_vertices`, `vertex_cells(grid, v)`, `vertex_point(grid, v)`, and
+`vertex_isopen(grid, v)`, and the keyed verbs are derived from those.
+Default `false`: the numbering is derived from the keys, or the geometric
+table is built.
+"""
+vertex_numbering_is_analytic(grid) = false
+
+"""
     VertexTable
 
-Merged vertex incidence of a conforming single-ring grid, built once by the
-geometric fallback (extension) and cached per grid object.
+Merged vertex incidence of a conforming single-ring grid, built by the
+geometric fallback (extension) and held by [`GridAndVertices`](@ref) or the
+[`DualGrid`](@ref).
 """
 struct VertexTable{P}
     points::Vector{P}           # vertex v -> its point
@@ -83,26 +104,17 @@ struct VertexTable{P}
     isopen::BitVector
 end
 
-const _VERTEX_CACHE = IdDict{Any,Any}()
-const _VERTEX_LOCK = ReentrantLock()
-const _LAST_VT = Ref{Any}((nothing, nothing))   # lock-free one-entry memo for hot loops
-
 """
     vertex_table(grid) -> VertexTable
 
-The cached geometric vertex incidence (fallback). Grids with analytic vertex
+The geometric vertex incidence (fallback), built per call in O(ncells); a
+[`GridAndVertices`](@ref) answers its stored table. Grids with analytic vertex
 identity never reach this.
 """
 function vertex_table(grid)
     conformity(grid) isa Conforming || _refuse_dual(grid)
     P = _pointtype(grid)
-    last = _LAST_VT[]
-    last[1] === grid && return last[2]::VertexTable{P}
-    t = lock(_VERTEX_LOCK) do
-        get!(() -> fallback_vertex_table(best_manifold(grid), grid), _VERTEX_CACHE, grid)
-    end
-    _LAST_VT[] = (grid, t)
-    return t::VertexTable{P}
+    return fallback_vertex_table(best_manifold(grid), grid)::VertexTable{P}
 end
 _pointtype(grid) = eltype(Base.promote_op(cell_corners, typeof(grid), Int))
 
@@ -111,20 +123,19 @@ _pointtype(grid) = eltype(Base.promote_op(cell_corners, typeof(grid), Int))
 struct VertexNumbering
     offsets::Vector{Int}        # vertices owned by cells 1:i-1
 end
-const _NUMBERING_CACHE = IdDict{Any,Any}()
+"The dense numbering of a grid with analytic vertices, derived per call in O(ncells)."
 function vertex_numbering(grid)
-    lock(_VERTEX_LOCK) do
-        get!(_NUMBERING_CACHE, grid) do
-            n = ncells(grid)
-            offs = Vector{Int}(undef, n + 1)
-            offs[1] = 0
-            for i in 1:n
-                offs[i+1] = offs[i] + _nowned(grid, i)
-            end
-            VertexNumbering(offs)
-        end
-    end::VertexNumbering
+    n = ncells(grid)
+    offs = Vector{Int}(undef, n + 1)
+    offs[1] = 0
+    for i in 1:n
+        offs[i+1] = offs[i] + _nowned(grid, i)
+    end
+    return VertexNumbering(offs)
 end
+"The precomputation the dense vertex verbs of `grid` need: its numbering, its table, or nothing."
+_vertex_precomputation(grid) = vertex_numbering_is_analytic(grid) ? nothing :
+    vertices_are_analytic(grid) ? vertex_numbering(grid) : vertex_table(grid)
 function _nowned(grid, i)
     c = 0
     for k in 1:length(cell_corners(grid, i))
@@ -134,17 +145,52 @@ function _nowned(grid, i)
     return c
 end
 
+# --- keys derived from a provider's own dense connectivity ------------------------
+# (`vertex_numbering_is_analytic` without `vertices_are_analytic`)
+
+_derives_keys(grid) = vertex_numbering_is_analytic(grid) && !vertices_are_analytic(grid)
+@noinline _missing_dense(grid, f) = throw(ArgumentError(
+    "$(typeof(grid)) declares vertex_numbering_is_analytic but defines no `$f(grid, ...)` dense method"))
+
+# the canonical key of dense vertex v: its corner on the lowest cell of its fan
+function _dense_key(grid, v)
+    c = minimum(vertex_cells(grid, v))
+    vs = cell_vertices(grid, c)
+    j = findfirst(==(v), vs)
+    j === nothing && error("vertex $v not on its owner cell $c")
+    cs = cell_corners(grid, c)
+    length(cs) == length(vs) && return VertexKey(c, j)
+    p = vertex_point(grid, v)
+    k = findfirst(q -> _near(q, p), cs)
+    k === nothing && error("vertex $v is no corner of its owner cell $c")
+    return VertexKey(c, k)
+end
+# the dense vertex at corner key.corner of cell key.cell, or 0 when that corner is not a vertex
+function _dense_index(grid, key::VertexKey)
+    vs = cell_vertices(grid, key.cell)
+    cs = cell_corners(grid, key.cell)
+    length(cs) == length(vs) && return Int(vs[key.corner])
+    p = cs[key.corner]
+    for v in vs
+        _near(vertex_point(grid, v), p) && return Int(v)
+    end
+    return 0
+end
+
 # --- the dense API ----------------------------------------------------------------
 
 """
     nvertices(grid) -> Int
 
 Dense count of the grid's vertices (conforming single-ring grids). Analytic
-vertices: derived from the keys; otherwise the fallback merges corners once
-and caches.
+vertices: derived from the keys; otherwise read from the geometric vertex
+table. Either is O(ncells) per call on a plain grid: hold it through
+[`GridAndVertices`](@ref) where the dense verbs are called repeatedly.
 """
-nvertices(grid) = vertices_are_analytic(grid) ? vertex_numbering(grid).offsets[end] :
-    length(vertex_table(grid).points)
+function nvertices(grid)
+    vertex_numbering_is_analytic(grid) && _missing_dense(grid, :nvertices)
+    return vertices_are_analytic(grid) ? vertex_numbering(grid).offsets[end] : length(vertex_table(grid).points)
+end
 
 """
     cell_vertices(grid, i) -> AbstractVector{Int}
@@ -155,6 +201,7 @@ repeated corners appear once).
 """
 function cell_vertices(grid, i::Integer)
     vertices_are_analytic(grid) && return MappedVec(key -> vertex_index(grid, key), cell_vertex_keys(grid, i))
+    vertex_numbering_is_analytic(grid) && _missing_dense(grid, :cell_vertices)
     t = vertex_table(grid)
     return view(t.cell_verts, t.cell_ptr[i]:t.cell_ptr[i+1]-1)
 end
@@ -169,6 +216,7 @@ order from the boundary edge where the fan starts.
 """
 function vertex_cells(grid, v::Integer)
     vertices_are_analytic(grid) && return vertex_cells(grid, vertex_key(grid, v))
+    vertex_numbering_is_analytic(grid) && _missing_dense(grid, :vertex_cells)
     t = vertex_table(grid)
     return view(t.vert_cells, t.vert_ptr[v]:t.vert_ptr[v+1]-1)
 end
@@ -183,8 +231,11 @@ vertex_cells(grid, key::VertexKey) = vertices_are_analytic(grid) ? _missing_keye
 
 The point of a vertex.
 """
-vertex_point(grid, v::Integer) = vertices_are_analytic(grid) ? vertex_point(grid, vertex_key(grid, v)) :
-    vertex_table(grid).points[v]
+function vertex_point(grid, v::Integer)
+    vertices_are_analytic(grid) && return vertex_point(grid, vertex_key(grid, v))
+    vertex_numbering_is_analytic(grid) && _missing_dense(grid, :vertex_point)
+    return vertex_table(grid).points[v]
+end
 vertex_point(grid, key::VertexKey) = cell_corners(grid, key.cell)[key.corner]
 
 """
@@ -200,9 +251,11 @@ policy.
 """
 function vertex_isopen(grid, v::Integer)
     vertices_are_analytic(grid) && return vertex_isopen(grid, vertex_key(grid, v))
+    vertex_numbering_is_analytic(grid) && _missing_dense(grid, :vertex_isopen)
     return vertex_table(grid).isopen[v]
 end
 function vertex_isopen(grid, key::VertexKey)
+    _derives_keys(grid) && return vertex_isopen(grid, vertex_index(grid, key))
     isglobal(grid) && return false
     cs = vertex_cells(grid, key)
     m = length(cs)
@@ -231,10 +284,16 @@ end
 
 The canonical key of corner `k` of cell `i` (`nothing` when that corner is not
 a vertex), or of dense vertex `v`. A grid with [`vertices_are_analytic`](@ref)
-defines the three-argument form; otherwise it is read from the fallback table.
+defines the three-argument form (and the two-argument one when its numbering
+is analytic too); a grid with its own dense connectivity has both derived from
+it; otherwise they are read from the fallback table.
 """
 function vertex_key(grid, i::Integer, k::Integer)
     vertices_are_analytic(grid) && _missing_keyed(grid, :vertex_key)
+    if vertex_numbering_is_analytic(grid)
+        v = _dense_index(grid, VertexKey(i, k))
+        return v == 0 ? nothing : _dense_key(grid, v)
+    end
     t = vertex_table(grid)
     for j in t.cell_ptr[i]:t.cell_ptr[i+1]-1
         t.cell_corner[j] == k && return _table_key(t, t.cell_verts[j])
@@ -243,6 +302,7 @@ function vertex_key(grid, i::Integer, k::Integer)
 end
 function vertex_key(grid, v::Integer)
     if vertices_are_analytic(grid)
+        vertex_numbering_is_analytic(grid) && _missing_dense(grid, :vertex_key)
         offs = vertex_numbering(grid).offsets
         1 <= v <= offs[end] || throw(BoundsError(grid, v))
         c = searchsortedlast(offs, v - 1)
@@ -253,6 +313,7 @@ function vertex_key(grid, v::Integer)
         end
         error("inconsistent vertex numbering")
     end
+    vertex_numbering_is_analytic(grid) && return _dense_key(grid, v)
     return _table_key(vertex_table(grid), v)
 end
 function _table_key(t::VertexTable, v)
@@ -273,6 +334,7 @@ The dense number of a vertex key (any corner key of the vertex is accepted).
 """
 function vertex_index(grid, key::VertexKey)
     if vertices_are_analytic(grid)
+        vertex_numbering_is_analytic(grid) && _missing_dense(grid, :vertex_index)
         key = vertex_key(grid, key.cell, key.corner)
         key === nothing && throw(ArgumentError("corner is not a vertex"))
         c = key.cell
@@ -283,9 +345,14 @@ function vertex_index(grid, key::VertexKey)
         end
         return r
     end
-    t = vertex_table(grid)
-    for j in t.cell_ptr[key.cell]:t.cell_ptr[key.cell+1]-1
-        t.cell_corner[j] == key.corner && return t.cell_verts[j]
+    if vertex_numbering_is_analytic(grid)
+        v = _dense_index(grid, key)
+        v == 0 || return v
+    else
+        t = vertex_table(grid)
+        for j in t.cell_ptr[key.cell]:t.cell_ptr[key.cell+1]-1
+            t.cell_corner[j] == key.corner && return t.cell_verts[j]
+        end
     end
     throw(ArgumentError("corner $(key.corner) of cell $(key.cell) is not a vertex"))
 end
@@ -300,6 +367,7 @@ function cell_vertex_keys(grid, i::Integer)
     if vertices_are_analytic(grid)
         return FuncVec(k -> vertex_key(grid, i, k)::VertexKey, length(cell_corners(grid, i)))
     end
+    vertex_numbering_is_analytic(grid) && return MappedVec(v -> _dense_key(grid, v), cell_vertices(grid, i))
     t = vertex_table(grid)
     return MappedVec(v -> _table_key(t, v), view(t.cell_verts, t.cell_ptr[i]:t.cell_ptr[i+1]-1))
 end
@@ -321,34 +389,31 @@ Declared `SimpleCells`. The dual of a global conforming grid tiles the sphere.
 """
 struct DualGrid{G,T} <: AbstractGrid
     primal::G
-    table::T       # the primal's fallback VertexTable, or `nothing` when the primal answers itself
+    # the primal's VertexTable or VertexNumbering (the dual owns its
+    # precomputation), or nothing when the primal numbers its vertices itself
+    table::T
 end
 
 """
     dual(grid) -> DualGrid
 
-The dual grid. Refused up front for `GeneralCells`, overlapping, or
-non-conforming grids.
+The dual grid, holding the primal's vertex precomputation (built once here;
+nothing when the primal's numbering is analytic). Refused up front for `GeneralCells`, overlapping, or non-conforming grids.
 """
 function dual(grid)
     conformity(grid) isa Conforming || _refuse_dual(grid)
-    return DualGrid(grid, uses_vertex_fallback(grid) ? vertex_table(grid) : nothing)
+    return DualGrid(grid, _vertex_precomputation(grid))
 end
 
-"Whether `nvertices` on this grid is answered by the geometric fallback table."
-uses_vertex_fallback(grid) = !vertices_are_analytic(grid) &&
-    Base.unwrap_unionall(which(nvertices, Tuple{typeof(grid)}).sig).parameters[2] === Any
-
-_nv(d::DualGrid{G,Nothing}) where {G} = nvertices(d.primal)
-_nv(d::DualGrid) = length(d.table.points)
-_vpoint(d::DualGrid{G,Nothing}, v) where {G} = vertex_point(d.primal, v)
-_vpoint(d::DualGrid, v) = @inbounds d.table.points[v]
-_vcells(d::DualGrid{G,Nothing}, v) where {G} = vertex_cells(d.primal, v)
-_vcells(d::DualGrid, v) = (t = d.table; view(t.vert_cells, t.vert_ptr[v]:t.vert_ptr[v+1]-1))
-_cverts(d::DualGrid{G,Nothing}, c) where {G} = cell_vertices(d.primal, c)
-_cverts(d::DualGrid, c) = (t = d.table; view(t.cell_verts, t.cell_ptr[c]:t.cell_ptr[c+1]-1))
-_isopen(d::DualGrid{G,Nothing}, v) where {G} = vertex_isopen(d.primal, v)
-_isopen(d::DualGrid, v) = @inbounds d.table.isopen[v]
+# The primal's dense vertex verbs, answered from the stored precomputation, or
+# by the primal itself when it numbers its own vertices.
+_vg(d::DualGrid) = GridAndVertices(d.primal, d.table)
+_vg(d::DualGrid{G,Nothing}) where {G} = d.primal
+_nv(d::DualGrid) = nvertices(_vg(d))
+_vpoint(d::DualGrid, v) = vertex_point(_vg(d), v)
+_vcells(d::DualGrid, v) = vertex_cells(_vg(d), v)
+_cverts(d::DualGrid, c) = cell_vertices(_vg(d), c)
+_isopen(d::DualGrid, v) = vertex_isopen(_vg(d), v)
 
 Base.parent(d::DualGrid) = d.primal
 ncells(d::DualGrid) = _nv(d)

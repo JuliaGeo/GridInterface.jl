@@ -81,9 +81,12 @@ system(s::Subset) = system(s.parent)
 level(s::Subset) = level(s.parent)
 GOC.best_manifold(s::Subset) = best_manifold(s.parent)
 for f in (:cellshape, :tessellation, :extent_is_expensive, :location_is_analytic,
-          :neighbors_are_analytic, :cellindextypes, :edgekind, :cell_geometry_is_expensive,
-          :leaf_capacity)
+          :neighbors_are_analytic, :cellindextypes, :edgekind, :cell_geometry_is_expensive)
     @eval $f(s::Subset) = $f(s.parent)
+end
+# one method per core hint as well, so these beat the core's `(Any, Balanced)` forms
+for H in (:LeafHint, :Balanced, :ForSweeps, :ForQueries)
+    @eval leaf_capacity(s::Subset, h::$H) = leaf_capacity(s.parent, h)
 end
 reindex(::Type{T}, s::Subset, c) where {T} = reindex(T, s.parent, c)
 

@@ -24,7 +24,10 @@ up front.
 
 The contract is duck-typed: [`AbstractGrid`](@ref) is an optional convenience
 supertype; types that already have a supertype elsewhere (DGG grids, CR
-curvilinear grids) join by defining methods and `isgrid(::Type{T}) = true`.
+curvilinear grids) join by defining methods and `isgrid(::T) = true`.
+GridInterface's own transparent wrappers ([`GridAndTree`](@ref),
+[`ChunkedGrid`](@ref), [`GridAndVertices`](@ref)) share
+[`AbstractWrappedGrid`](@ref) and forward every verb to their parent.
 
 Positions (`1:ncells(grid)`) are the currency of every verb. Fallbacks that need
 real geometry live in `GridInterfaceGeometryOpsExt` and activate when
@@ -60,7 +63,7 @@ include("dual.jl")
 include("hierarchy.jl")
 include("cursor.jl")
 include("multilevel.jl")
-include("gridandtree.jl")
+include("wrappers.jl")
 
 # --- identity
 export AbstractGrid, isgrid
@@ -75,19 +78,22 @@ export Tessellation, Tessellating, Overlapping, tessellation
 export cellat, cellsat, cell_contains, location_is_analytic
 export UnitSphericalPoint, SphericalCap
 # --- tree
-export treeify, subtree, GridAndTree, split_weight, subtree_indices, extent_is_expensive, leaf_capacity, grid_extent
+export treeify, subtree, split_weight, subtree_indices, extent_is_expensive, leaf_capacity, grid_extent
+export LeafHint, Balanced, ForSweeps, ForQueries
 export query, query_candidates, query_region, QueryPredicate, Intersects, Within, Contains, CentroidIn
 export RootIndex, root_index
 # --- subsets and chunks
 export subset, Subset, parentpositions, gridrelation, GridRelation, NoParent, ParentGrid, ParentSystem
-export chunks, chunkat, grow, system
+export chunks, chunkat, grow, system, LevelChunks
+# --- wrappers
+export AbstractWrappedGrid, GridAndTree, ChunkedGrid, mockchunks, GridAndVertices
 # --- neighbours
 export Connectivity, Edge, Vertex, neighbors, ring, maxneighbors, maxring, winding, neighbors_are_analytic
 export Winding, CounterClockwise, Clockwise, CustomOrder, Unordered
 export halo, border, interior
 # --- dual
 export nvertices, cell_vertices, vertex_cells, vertex_point, vertex_isopen, dual, DualGrid, dual_ring_cells
-export VertexKey, vertex_key, vertex_index, cell_vertex_keys, vertices_are_analytic, vertexat
+export VertexKey, vertex_key, vertex_index, cell_vertex_keys, vertices_are_analytic, vertex_numbering_is_analytic, vertexat
 export Conformity, Conforming, NonConforming, conformity
 # --- hierarchy
 export AbstractHierarchicalGridSystem, issystem, levels, rootcells, children, levelgrid

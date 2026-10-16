@@ -8,7 +8,7 @@
 
 A family of grids, one per level, with parent/child relations between cells of
 adjacent levels. Optional supertype; foreign systems join with
-`GridInterface.issystem(::Type{S}) = true`.
+`GridInterface.issystem(::S) = true`.
 
 Obligations (all on typed ids `c`; the ids subtype [`AbstractCellIndex`](@ref)):
 
@@ -36,13 +36,14 @@ abstract type AbstractHierarchicalGridSystem end
 Base.broadcastable(s::AbstractHierarchicalGridSystem) = Ref(s)
 
 """
-    issystem(x) / issystem(::Type) -> Bool
+    issystem(x) -> Bool
 
-Whether `x` claims the hierarchical-system contract. Define it on the type.
+Whether `x` claims the hierarchical-system contract. An instance trait: `true`
+for an [`AbstractHierarchicalGridSystem`](@ref), `false` by default; a foreign
+system adds `issystem(::S) = true`.
 """
-issystem(::T) where {T} = issystem(T)
-issystem(::Type) = false
-issystem(::Type{<:AbstractHierarchicalGridSystem}) = true
+issystem(x) = false
+issystem(::AbstractHierarchicalGridSystem) = true
 
 """
     levels(sys) -> AbstractUnitRange{Int}
@@ -126,28 +127,39 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    LevelChunks(grid, l)
+    LevelChunks(l)
 
-The level-`l` chunks of a complete level grid of a sorted-subtree system: chunk
-`k` is the `Subset` over `descendant_range` of the `k`-th level-`l` cell,
-rooted at that cell. A lazy `AbstractVector` with no storage; `getindex` is
-O(1) plus one `cellindex`; [`chunkat`](@ref) is one `ancestor`.
+A chunking by level, as a value: `mockchunks(grid, LevelChunks(l))` is `grid`
+with `chunks` answering `chunks(grid, l)`, the level-`l` blocks (see
+[`chunks`](@ref), [`mockchunks`](@ref)).
 """
-struct LevelChunks{G,S,ID,LG} <: AbstractVector{Subset{G,UnitRange{Int},ID}}
+struct LevelChunks
+    level::Int
+end
+
+"""
+    AncestorChunks(grid, sys, chunkgrid, lg, n)
+
+What `chunks(grid, l)` returns on a complete level grid of a sorted-subtree
+system: chunk `k` is the `Subset` over `descendant_range` of the `k`-th
+level-`l` cell, rooted at that cell. A lazy `AbstractVector` with no storage;
+`getindex` is O(1) plus one `cellindex`; [`chunkat`](@ref) is one `ancestor`.
+"""
+struct AncestorChunks{G,S,ID,LG} <: AbstractVector{Subset{G,UnitRange{Int},ID}}
     grid::G
     sys::S
     chunkgrid::LG        # levelgrid(sys, l)
     lg::Int              # the grid's own level
     n::Int
 end
-Base.size(c::LevelChunks) = (c.n,)
-Base.IndexStyle(::Type{<:LevelChunks}) = IndexLinear()
-function Base.getindex(c::LevelChunks, k::Int)
+Base.size(c::AncestorChunks) = (c.n,)
+Base.IndexStyle(::Type{<:AncestorChunks}) = IndexLinear()
+function Base.getindex(c::AncestorChunks, k::Int)
     @boundscheck 1 <= k <= c.n || throw(BoundsError(c, k))
     a = cellindex(c.chunkgrid, k)
     return Subset(c.grid, descendant_range(c.sys, a, c.lg); root=a)
 end
-function chunkat(c::LevelChunks, i::Integer)
+function chunkat(c::AncestorChunks, i::Integer)
     a = ancestor(c.sys, cellindex(c.grid, i), level(c.chunkgrid))
     return localindex(c.chunkgrid, a)::Int
 end
@@ -186,7 +198,7 @@ function hierarchy_chunks(grid, l::Integer)
     if gridrelation(grid) isa NoParent
         cg = levelgrid(sys, l)
         ID = typeof(cellindex(cg, 1))
-        return LevelChunks{typeof(grid),typeof(sys),ID,typeof(cg)}(grid, sys, cg, lg, ncells(cg))
+        return AncestorChunks{typeof(grid),typeof(sys),ID,typeof(cg)}(grid, sys, cg, lg, ncells(cg))
     end
     # A subset of a level grid numbers its own cells: one window per ancestor,
     # found by a binary search over the subset's ascending parent positions.

@@ -21,7 +21,6 @@ let g = GrI.levelgrid(hp, 3)          # warm up both paths
 end
 for l in (5, 6, 8)
     g = GrI.levelgrid(hp, l)
-    GrI.clear_caches!()
     t_tab = @elapsed GrI.fallback_vertex_table(GOC.best_manifold(g), g)
     tab = GrI.fallback_vertex_table(GOC.best_manifold(g), g)
     # analytic incidence per corner, no table

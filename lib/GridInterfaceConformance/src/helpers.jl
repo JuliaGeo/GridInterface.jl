@@ -161,7 +161,7 @@ function fallback_verbs(grid)
     out = Symbol[]
     for (f, args) in ((GrI.cell_centroid, (G, Int)), (GrI.cell_area, (G, Int)),
                       (GrI.cell_extent, (G, Int)), (GrI.cell_geometry, (G, Int)),
-                      (GrI.cellat, (G, Any)), (GrI.treeify, (G,)),
+                      (GrI.cellat, (G, Any)), (GrI.treeify, (G, Int)),
                       (GrI.cell_contains, (G, Int, Any)), (GrI.nvertices, (G,)),
                       (GrI.cell_vertices, (G, Int)), (GrI.vertex_cells, (G, Int)))
         _is_generic(f, args) && push!(out, nameof(f))

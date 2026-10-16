@@ -9,7 +9,8 @@ is detected and failed; every verb answered by a fallback is listed.
 
     rep = check_grid(grid; name = "my grid")        # report only, never throws
     test_grid(grid; name = "my grid")               # same, as @testset/@test
-    rep = check_system(sys; name = "HEALPix")       # hierarchy + performance laws
+    rep = check_system(sys; name = "HEALPix")       # hierarchy + performance + laziness laws
+    rep = check_laziness(small, large)              # no verb's bytes scale between two sizes of a grid
     print_report(rep); family_status(rep)
 """
 module GridInterfaceConformance
@@ -31,7 +32,7 @@ using GeometryOpsCore: Planar, Spherical
 import Extents
 import GeoInterface as GI
 
-export check_grid, test_grid, check_system, test_system, check_multilevel,
+export check_grid, test_grid, check_system, test_system, check_multilevel, check_laziness,
     print_report, family_status, ConformanceReport, fallback_verbs
 
 include("report.jl")

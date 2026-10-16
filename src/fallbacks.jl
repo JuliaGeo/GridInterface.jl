@@ -23,12 +23,14 @@ Base.showerror(io::IO, e::NoGeometryBackend) = print(io,
     "GridInterfaceGeometryOpsExt.")
 
 # Each hook takes the manifold first so the extension's methods are strictly
-# more specific than these stubs.
+# more specific than these stubs. No hook caches: a fallback that needs a tree
+# builds `treeify(grid; leaf_capacity = ForQueries())` per call, which is a
+# `GridAndTree`'s stored tree, and the dual holds its vertex table.
 fallback_centroid(::Any, grid, i) = throw(NoGeometryBackend(:cell_centroid))
 fallback_area(::Any, grid, i) = throw(NoGeometryBackend(:cell_area))
 fallback_extent(::Any, grid, i) = throw(NoGeometryBackend(:cell_extent))
-fallback_treeify(::Any, grid) = throw(NoGeometryBackend(:treeify))
-fallback_subtree(::Any, grid, cells) = throw(NoGeometryBackend(:subtree))
+fallback_treeify(::Any, grid, n) = throw(NoGeometryBackend(:treeify))
+fallback_subtree(::Any, grid, cells, n) = throw(NoGeometryBackend(:subtree))
 fallback_cellat(::Any, grid, p) = throw(NoGeometryBackend(:cellat))
 fallback_cellsat(::Any, grid, p) = throw(NoGeometryBackend(:cellsat))
 fallback_contains(::Any, grid, i, p) = throw(NoGeometryBackend(:cell_contains))
@@ -37,21 +39,6 @@ fallback_vertex_table(::Any, grid) = throw(NoGeometryBackend(:cell_vertices))
 fallback_query(::Any, grid, pred) = throw(NoGeometryBackend(:query))
 fallback_point_extent(::Any, p) = throw(NoGeometryBackend(:cellat))
 fallback_region_extent(::Any, region) = throw(NoGeometryBackend(:query))
-
-"""
-    has_geometry_backend() -> Bool
-
-Whether GridInterfaceGeometryOpsExt is loaded.
-"""
-has_geometry_backend() = _HAS_BACKEND[]
-const _HAS_BACKEND = Ref(false)
-
-"""
-    clear_caches!()
-
-Drop the per-grid trees and vertex tables the geometric fallbacks cache.
-"""
-function clear_caches! end
 
 # ---------------------------------------------------------------------------
 # Spherical type contract. On a spherical or ellipsoidal manifold every point a

@@ -296,12 +296,13 @@ Base.@propagate_inbounds function Base.getindex(e::LeafEntries, i::Int)
     return (fr_emit(e.fr, k), fr_extent(e.fr, k))
 end
 
-# Cheap extents stay lazy (no allocation). Expensive ones are built once per
-# visit: CR's dual DFS carries a leaf's entries while the opposing tree
-# descends, and a lazy vector would recompute every cap per opposing leaf.
+# Cheap extents stay lazy (no allocation). Expensive ones in a bucketed leaf
+# (the sweep shape) are built once per visit: CR's dual DFS carries a leaf's
+# entries while the opposing tree descends, and a lazy vector would recompute
+# every cap per opposing leaf. A one-cell leaf (the query shape) stays lazy.
 function STI.child_indices_extents(n::HierarchyCursor{F,ID,E}) where {F,ID,E}
     entries = LeafEntries{F,E}(n.fr, n.lo, max(0, _count(n)))
-    return _fr_extent_is_expensive(n.fr) ? collect(entries) : entries
+    return n.bucket > 1 && _fr_extent_is_expensive(n.fr) ? collect(entries) : entries
 end
 
 # --- the selection-mode cursor (systems without sorted subtrees) -------------
@@ -393,7 +394,10 @@ _subset_root(s::Subset) = s.root
 """
     hierarchy_tree(grid; bucket = 1)
 
-The generic hierarchy cursor over a complete level grid or a subset of one.
+The generic hierarchy cursor over a complete level grid or a subset of one,
+with up to `bucket` members per leaf; what `treeify(grid, n)` builds for a
+level grid. Leaf entries are stored per visit only when `bucket > 1` (and
+extents are expensive): the one-cell tree is lazy throughout.
 """
 function hierarchy_tree(grid; bucket::Integer=1)
     sys = system(grid)
@@ -424,9 +428,9 @@ end
 function subtree(grid, s::Subset)
     if parent(s) === grid && s.root !== nothing && system(grid) !== nothing && level(grid) !== nothing &&
        gridrelation(grid) isa NoParent
-        return hierarchy_subtree(grid, s.cells; root=s.root, bucket=_bucket(grid))
+        return hierarchy_subtree(grid, s.cells; root=s.root, bucket=leaf_capacity(grid, Balanced()))
     end
     return subtree(grid, parentpositions(s))
 end
 
-treeify(s::Subset) = _default_treeify(s)
+treeify(s::Subset, n::Integer) = _default_treeify(s, Int(n))

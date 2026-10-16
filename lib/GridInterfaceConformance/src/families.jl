@@ -178,24 +178,63 @@ function check_tree!(rep, grid, n, m, S, full_tree_limit)
         info!(rep, F, "nested child extents (promised by R-trees only)",
             "$(nested_bad[]) non-nested pairs over $(visited[]) nodes")
     end
-    guarded!(rep, F, "split_weight forwards through GridAndTree") do
-        GrI.split_weight(GrI.GridAndTree(grid, tree)) == GrI.split_weight(tree)
-    end
     guarded!(rep, F, "subtree(grid, cells) emits parent positions") do
         cells = S[1:2:end]
         ls = sort!(collect_leaves(subtree(grid, cells)))
         ls == cells, "expected $(length(cells)) got $(length(ls))"
     end
-    guarded!(rep, F, "GridAndTree forwards every grid verb") do
-        g = GrI.GridAndTree(grid, tree)
-        ok = ncells(g) == n && best_manifold(g) == m && cellshape(g) == cellshape(grid) &&
-             all(i -> cellindex(g, i) == cellindex(grid, i) && cell_extent(g, i) == cell_extent(grid, i) &&
-                          cell_centroid(g, i) == cell_centroid(grid, i), S)
-        if cellshape(grid) isa SingleRing
-            ok &= all(i -> collect(cell_boundary(g, i)) == collect(cell_boundary(grid, i)), S)
+    # the intents: every hint and an integer yield a tree over 1:ncells
+    for hint in (GrI.Balanced(), GrI.ForSweeps(), GrI.ForQueries(), 3)
+        guarded!(rep, F, "treeify(grid; leaf_capacity = $hint) is a tree over 1:ncells") do
+            t = treeify(grid; leaf_capacity=hint)
+            ok = STI.isspatialtree(t)
+            n <= full_tree_limit && (ok &= sort!(collect_leaves(t)) == 1:n)
+            ok, string(typeof(t))
         end
-        ok &= GrI.treeify(g) === tree
-        ok
+    end
+    # GridInterface's own trees honour the capacity; a provider with one tree
+    # shape may ignore it (reported, not failed)
+    cap = GrI.leaf_capacity(grid, GrI.ForSweeps())
+    ts = treeify(grid; leaf_capacity=GrI.ForSweeps())
+    worst = _max_leaf(ts, 2000)
+    metric!(rep, "ForSweeps max leaf size", worst)
+    if nameof(typeof(ts)) in (:HierarchyCursor, :SelectionCursor, :RTree)
+        law!(rep, F, "ForSweeps leaves hold at most leaf_capacity(grid, ForSweeps()) = $cap cells", worst <= cap,
+            "a leaf holds $worst")
+    else
+        info!(rep, F, "ForSweeps leaves vs leaf_capacity = $cap (provider tree)", "largest leaf $worst")
+    end
+    # wrappers: GridAndTree and mockchunks forward every verb in WRAPPED_VERBS
+    nbr_ok = cellshape(grid) isa GrI.Polygonal || !(:neighbors in rep.fallbacks)
+    for (wname, w) in (("GridAndTree", GrI.GridAndTree(grid, tree)), ("mockchunks", GrI.mockchunks(grid, GrI.chunks(grid))))
+        guarded!(rep, F, "$wname forwards every verb in WRAPPED_VERBS") do
+            bad = String[]; k = 0
+            for (f, Ts) in GrI.WRAPPED_VERBS
+                args = _wrapper_args(grid, S, f, Ts, nbr_ok)
+                args === nothing && continue
+                k += 1
+                fn = getfield(GrI, f)
+                _wrapper_key(f, fn(w, args...)) == _wrapper_key(f, fn(grid, args...)) || push!(bad, "$f$Ts")
+            end
+            metric!(rep, "$wname verbs exercised", "$k / $(length(GrI.WRAPPED_VERBS))")
+            isempty(bad), "differ: " * join(first(bad, 6), ", ")
+        end
+    end
+    guarded!(rep, F, "GridAndTree returns its tree for every hint and an integer") do
+        g = GrI.GridAndTree(grid, tree)
+        GrI.treeify(g) === tree && all(h -> treeify(g; leaf_capacity=h) === tree, (GrI.Balanced(), GrI.ForSweeps(), GrI.ForQueries(), 3))
+    end
+    guarded!(rep, F, "split_weight and subtree_indices survive GridAndTree") do
+        g = GrI.GridAndTree(grid, tree)
+        GrI.split_weight(g) == GrI.split_weight(tree) && collect(GrI.subtree_indices(g)) == collect(GrI.subtree_indices(tree))
+    end
+    guarded!(rep, F, "mockchunks answers the given chunks and chunkat agrees") do
+        ch = GrI.chunks(grid)
+        cells = S[1:2:end]
+        mine = [GrI.subset(grid, cells), GrI.subset(grid, setdiff(1:n, cells))]
+        w = GrI.mockchunks(grid, mine)
+        GrI.chunks(w) === mine && GrI.chunkat(w, cells[1]) == 1 && GrI.chunkat(w, n) == (n in cells ? 1 : 2) &&
+            (ch === nothing ? GrI.chunks(GrI.mockchunks(grid, nothing)) === nothing : true)
     end
     return tree
 end
@@ -227,6 +266,66 @@ function _walk_extents!(grid, m, node, nested_bad, geom_bad, visited, budget)
 end
 
 _cellpts(grid, i) = cellshape(grid) isa SingleRing ? collect(cell_boundary(grid, i)) : all_points(cell_geometry(grid, i))
+
+# the largest leaf (entries) over the first `budget` nodes
+function _max_leaf(tree, budget)
+    worst = 0; seen = 0
+    stack = Any[tree]
+    while !isempty(stack) && seen < budget
+        node = pop!(stack); seen += 1
+        if STI.isleaf(node)
+            worst = max(worst, length(STI.child_indices_extents(node)))
+        else
+            for c in STI.getchild(node); push!(stack, c); end
+        end
+    end
+    return worst
+end
+
+# Sample arguments for a forwarded verb shape, or `nothing` when the suite does
+# not exercise it (O(ncells) dense vertex verbs, verbs the grid cannot answer).
+function _wrapper_args(grid, S, f, Ts, nbr_ok)
+    i = S[end]
+    nbr = (:neighbors, :ring, :halo, :border, :interior)
+    f in (:dual, :nvertices, :vertex_table, :vertex_numbering, :vertexat, :cell_vertices, :cell_vertex_keys,
+          :vertex_cells, :vertex_point, :vertex_isopen, :vertex_key, :vertex_index) && return nothing
+    f in nbr && !nbr_ok && return nothing
+    f in (:cell_boundary, :cell_corners) && !(cellshape(grid) isa SingleRing) && return nothing
+    f === :parentpositions && !(GrI.gridrelation(grid) isa GrI.ParentGrid) && return nothing
+    f === :globalindex && GrI.gridrelation(grid) isa GrI.ParentSystem && return nothing
+    f === :chunkat && GrI.chunks(grid) === nothing && return nothing
+    f === :chunks && Ts == (Integer,) && return nothing
+    f === :localindex && Ts == (Integer,) && return cellindex(grid, i) isa Integer ? (i,) : nothing
+    Ts == () && return ()
+    Ts == (Integer,) && return f in (:halo, :maxring, :maxneighbors) ? (1,) : f === :treeify ? (3,) : (i,)
+    Ts == (Integer, Type) && return (i, first(cellindextypes(grid)))
+    Ts == (Integer, Integer) && return f in nbr ? (i, 1) : nothing
+    Ts == (Integer, Any) && return (i, cell_centroid(grid, i))
+    Ts == (Any,) && return f in (:localindex, :globalindex) ? (cellindex(grid, i),) :
+                           f === :query ? (cell_extent(grid, i),) : (cell_centroid(grid, i),)
+    Ts == (GrI.QueryPredicate,) && return (GrI.CentroidIn(cell_extent(grid, i)),)
+    Ts == (GrI.Connectivity,) && return (Edge(),)
+    Ts == (Integer, GrI.Connectivity) && return (1, Edge())
+    Ts == (GrI.LeafHint,) && return f === :treeify ? (GrI.ForQueries(),) : (GrI.ForSweeps(),)
+    Ts == (GrI.Balanced,) && return (GrI.Balanced(),)
+    Ts == (GrI.ForSweeps,) && return (GrI.ForSweeps(),)
+    Ts == (GrI.ForQueries,) && return (GrI.ForQueries(),)
+    Ts == (Integer, GrI.Index{GrI.Local}) && return (i, GrI.Index(GrI.Local()))
+    Ts == (Integer, GrI.Index{GrI.Global}) && return (i, GrI.Index(GrI.Global()))
+    Ts == (Integer, GrI.Index{Type{T}} where {T}) && return (i, GrI.Index(first(cellindextypes(grid))))
+    Ts == (AbstractVector{<:Integer},) && return (S[1:2:end],)
+    Ts == (AbstractVector{<:Integer}, Integer) && return (S[1:2:end], 1)
+    Ts == (GrI.Subset,) && return (GrI.subset(grid, S[1:2:end]),)
+    return nothing
+end
+# a comparable key for a verb's answer (lazy vectors, trees, polygons)
+function _wrapper_key(f, x)
+    f === :chunks && return x === nothing ? nothing : length(x)
+    STI.isspatialtree(x) && return (typeof(x), GrI.split_weight(x))
+    f === :cell_geometry && return collect(GI.getpoint(x))
+    x isa AbstractVector && return collect(x)
+    return x
+end
 
 # ------------------------------------------------------------------ geometry
 function check_geometry!(rep, grid, m, S, area_rtol, total_area_limit=2_000_000)
@@ -533,7 +632,7 @@ function check_dual!(rep, grid, m, S)
     if ncells(grid) > 50_000 && :nvertices in rep.fallbacks
         return skip!(rep, F, "geometric vertex merge skipped above 50k cells (ncells = $(ncells(grid)))")
     end
-    if ncells(grid) > 2_000_000
+    if ncells(grid) > 2_000_000 && !GrI.vertex_numbering_is_analytic(grid)
         # the dense numbering is derived in O(n): check the keyed layer only
         GrI.vertices_are_analytic(grid) || return skip!(rep, F, "ncells = $(ncells(grid)) > 2M")
         guarded!(rep, F, "keyed vertices: each cell is in the fan of each of its corner keys") do
@@ -541,13 +640,47 @@ function check_dual!(rep, grid, m, S)
         end
         return skip!(rep, F, "dense-numbering laws skipped: ncells = $(ncells(grid)) > 2M")
     end
+    # The dense verbs are O(ncells) per call on a plain grid: the suite holds the
+    # precomputation once, as a caller would, and checks the grid's own verbs
+    # against it on a few samples.
+    V = try
+        GrI.GridAndVertices(grid)
+    catch e
+        return law!(rep, F, "vertex precomputation (GridAndVertices)", false, "threw: " * first(sprint(showerror, e), 200))
+    end
     nv = try
-        GrI.nvertices(grid)
+        GrI.nvertices(V)
     catch e
         return law!(rep, F, "nvertices", false, "threw: " * first(sprint(showerror, e), 200))
     end
     metric!(rep, "nvertices", nv)
     metric!(rep, "vertex identity answered by", :nvertices in rep.fallbacks ? "geometric fallback" : "provider")
+    if GrI.vertex_numbering_is_analytic(grid)
+        guarded!(rep, F, "analytic numbering: no vertex precomputation is built") do
+            V.table === nothing && GrI.dual(grid).table === nothing
+        end
+        guarded!(rep, F, "analytic numbering: vertex_key and vertex_index are inverse on the plain grid") do
+            all(v -> GrI.vertex_index(grid, GrI.vertex_key(grid, v)) == v, sample_positions(nv, length(S))) &&
+            all(i -> all(k -> GrI.vertex_key(grid, GrI.vertex_index(grid, k)) == k, GrI.cell_vertex_keys(grid, i)), S)
+        end
+        if !GrI.vertices_are_analytic(grid)
+            guarded!(rep, F, "analytic numbering: the derived keyed verbs agree with the provider's dense verbs") do
+                all(sample_positions(nv, length(S))) do v
+                    k = GrI.vertex_key(grid, v)
+                    collect(GrI.vertex_cells(grid, k)) == collect(GrI.vertex_cells(grid, v)) &&
+                    _close(m, GrI.vertex_point(grid, k), GrI.vertex_point(grid, v)) &&
+                    GrI.vertex_isopen(grid, k) == GrI.vertex_isopen(grid, v)
+                end
+            end
+        end
+    end
+    guarded!(rep, F, "the grid's own dense vertex verbs agree with the held table (sampled)") do
+        GrI.nvertices(grid) == nv &&
+        all(i -> collect(GrI.cell_vertices(grid, i)) == collect(GrI.cell_vertices(V, i)), S[1:min(end, 3)]) &&
+        all(v -> collect(GrI.vertex_cells(grid, v)) == collect(GrI.vertex_cells(V, v)) &&
+                 GrI.vertex_point(grid, v) == GrI.vertex_point(V, v), sample_positions(nv, 3))
+    end
+    grid = V
     guarded!(rep, F, "cell_vertices and vertex_cells are inverse incidences") do
         ok = true
         for i in S, v in GrI.cell_vertices(grid, i)

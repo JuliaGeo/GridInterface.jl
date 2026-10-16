@@ -7,20 +7,20 @@
 
 Optional convenience supertype for grids. The contract is duck-typed, so a type
 that already has a supertype elsewhere joins by defining the verbs and
-`GridInterface.isgrid(::Type{MyGrid}) = true`.
+`GridInterface.isgrid(::MyGrid) = true`.
 """
 abstract type AbstractGrid end
 Base.broadcastable(g::AbstractGrid) = Ref(g)
 
 """
     isgrid(x) -> Bool
-    isgrid(::Type) -> Bool
 
-Whether `x` claims the GridInterface contract. Define it on the type.
+Whether `x` claims the GridInterface contract. An instance trait (never
+`Type{<:X}`): `true` for an [`AbstractGrid`](@ref) or a wrapper, `false` by
+default; a foreign grid type adds `isgrid(::MyGrid) = true`.
 """
-isgrid(::T) where {T} = isgrid(T)
-isgrid(::Type) = false
-isgrid(::Type{<:AbstractGrid}) = true
+isgrid(x) = false
+isgrid(::AbstractGrid) = true
 
 """
     abstract type AbstractCellIndex
@@ -38,14 +38,13 @@ on this supertype, not on `iscellindex`.
 abstract type AbstractCellIndex end
 
 """
-    iscellindex(x) / iscellindex(::Type) -> Bool
+    iscellindex(c) -> Bool
 
-Whether `x` is a typed cell id (not a bare position). Adapters extend it for
-foreign id supertypes.
+Whether `c` is a typed cell id (not a bare position): an
+[`AbstractCellIndex`](@ref) by default. Adapters add methods for foreign id
+supertypes (`iscellindex(::ForeignId) = true`).
 """
-iscellindex(::T) where {T} = iscellindex(T)
-iscellindex(::Type) = false
-iscellindex(::Type{<:AbstractCellIndex}) = true
+iscellindex(c) = c isa AbstractCellIndex
 
 """
     ncells(grid) -> Int

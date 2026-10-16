@@ -113,6 +113,9 @@ function check_system(sys; name::AbstractString=string(nameof(typeof(sys))), lev
     lg = GrI.levelgrid(sys, gl)
     sub = check_grid(lg; name="$(name) level $gl", nsamples=nsamples)
     _merge!(rep, sub, "level $gl")
+    if gl + 1 <= last(Ls)
+        _merge!(rep, check_laziness(lg, GrI.levelgrid(sys, gl + 1); name="$(name) levels $gl / $(gl + 1)"), "laziness")
+    end
     mls = _sample_multilevel(sys, gl)
     if mls !== nothing
         _merge!(rep, check_multilevel(mls; name="$(name) multi-level set"), "multi-level")
@@ -225,4 +228,85 @@ function check_system_performance!(rep, sys, walk)
     metric!(rep, "children bytes", ac)
     metric!(rep, "rootcells bytes", ar)
     info!(rep, F, "children/rootcells allocation (reported, not failed)", "children $ac B, rootcells $ar B")
+end
+
+# ------------------------------------------------------------------ laziness
+"""
+    check_laziness(small, large; name) -> ConformanceReport
+
+The laziness law on two sizes of the same grid type (two levels of a system,
+two resolutions of a raster): no verb's bytes scale with `ncells` between
+them, and no verb retains state across sizes. Each verb is called on `small`,
+then `large`, then `small` again: the two small answers are equal, the second
+small call allocates no more than the first, and the large call allocates no
+more than a constant over the small one. Point location on a grid without an
+analytic `cellat` is measured through `GridAndTree` (the caller's tree);
+geometric neighbours are reported, not measured (they build a tree per call).
+"""
+function check_laziness(small, large; name::AbstractString="$(nameof(typeof(small))) × 2", quiet::Bool=true)
+    rep = ConformanceReport(String(name))
+    check_laziness!(rep, small, large)
+    quiet || print_report(rep)
+    return rep
+end
+
+_treekey(t) = (typeof(t), GrI.split_weight(t))
+# a middle position: the last one is a polar cell on lon/lat grids, whose
+# neighbourhood is legitimately proportional to the resolution
+_mid(g) = (ncells(g) + 1) ÷ 2
+_midpt(g) = cell_centroid(g, _mid(g))
+
+function check_laziness!(rep, small, large)
+    F = :performance
+    typeof(small) === typeof(large) || return info!(rep, F, "laziness law", "needs two sizes of one grid type, got $(typeof(small)) and $(typeof(large))")
+    ncells(small) < ncells(large) || return info!(rep, F, "laziness law", "the second grid is not larger")
+    metric!(rep, "laziness sizes", "$(ncells(small)) / $(ncells(large))")
+    verbs = Pair{String,Any}[
+        "cellindex" => g -> cellindex(g, _mid(g)),
+        "localindex ∘ cellindex" => g -> localindex(g, cellindex(g, _mid(g))),
+        "cell_centroid" => g -> cell_centroid(g, _mid(g)),
+        "cell_extent" => g -> cell_extent(g, _mid(g)),
+        "cell_area" => g -> cell_area(g, _mid(g)),
+        "cell_boundary" => g -> collect(_cellpts(g, _mid(g))),
+        "chunks" => g -> (c = GrI.chunks(g); c === nothing ? nothing : length(c)),
+        "subset" => g -> ncells(GrI.subset(g, [1, ncells(g)])),
+    ]
+    # The R-tree fallback is O(ncells) by contract, and so is any tree over a
+    # system without sorted subtrees (the selection cursor, a provider's index
+    # tree); a grid with its own O(1) tree or the window-mode cursor is measured.
+    sys = GrI.system(small)
+    if :treeify in fallback_verbs(small)
+        info!(rep, F, "laziness: treeify", "the R-tree fallback is O(ncells) to build: wrap once in GridAndTree; not measured")
+    elseif sys !== nothing && !GrI.has_sorted_subtrees(sys)
+        info!(rep, F, "laziness: treeify", "no sorted subtrees: a tree materialises the selection, O(ncells); not measured")
+    else
+        push!(verbs, "treeify" => g -> _treekey(treeify(g)),
+            "treeify ForSweeps" => g -> _treekey(treeify(g; leaf_capacity=GrI.ForSweeps())),
+            "treeify ForQueries" => g -> _treekey(treeify(g; leaf_capacity=GrI.ForQueries())),
+            "grid_extent" => g -> GrI.grid_extent(g),
+            "subtree" => g -> _treekey(subtree(g, [1, ncells(g)])))
+    end
+    if GrI.uses_neighbor_fallback(small)
+        info!(rep, F, "laziness: neighbors", "geometric fallback builds a tree per call; not measured")
+    else
+        push!(verbs, "neighbors" => g -> collect(neighbors(g, _mid(g))))
+    end
+    if GrI.location_is_analytic(small)
+        push!(verbs, "cellat" => g -> cellat(g, _midpt(g)))
+    else
+        # the caller's tree, built outside the measured call
+        ws, wl = GrI.GridAndTree(small; leaf_capacity=GrI.ForQueries()), GrI.GridAndTree(large; leaf_capacity=GrI.ForQueries())
+        push!(verbs, "cellat through GridAndTree" => g -> cellat(g === small ? ws : wl, _midpt(g)))
+    end
+    for (vname, f) in verbs
+        guarded!(rep, F, "laziness: $vname") do
+            f(small); f(large)                       # compile
+            r1 = f(small); b1 = @allocated f(small)
+            bL = @allocated f(large)
+            r2 = f(small); b2 = @allocated f(small)
+            metric!(rep, "laziness bytes $vname", "$b1 / $bL / $b2")
+            ok = r1 == r2 && b2 <= b1 && bL <= 2b1 + 256
+            ok, "small $b1 B, large $bL B, small again $b2 B" * (r1 == r2 ? "" : "; answers differ")
+        end
+    end
 end

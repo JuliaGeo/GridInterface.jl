@@ -178,7 +178,6 @@ fr_n(s::MultiLevelSet) = length(s.cells)
 
 # `has_sorted_subtrees` is a type-level fact for every system seen so far, so
 # this branch folds and the return type is concrete.
-treeify(s::MultiLevelSet) = has_sorted_subtrees(s.system) ? HierarchyCursor(s) : SelectionCursor(s)
 treeify(s::MultiLevelSet, bucket::Integer) =
     has_sorted_subtrees(s.system) ? HierarchyCursor(s; bucket) : SelectionCursor(s; bucket)
 
@@ -209,14 +208,16 @@ fr_n(F::MLSFrontier) = length(F.pos)
 _fr_extent_is_expensive(F::MLSFrontier) = extent_is_expensive(F.s)
 
 function _mls_cursor(m::MultiLevelSet, pos, emit::Bool; root=nothing, bucket=1)
-    m.sorted || return fallback_subtree(best_manifold(m), m, pos)
+    m.sorted || return fallback_subtree(best_manifold(m), m, pos, bucket)
     return HierarchyCursor(MLSFrontier(m, pos, emit); root, bucket)
 end
 
-treeify(s::Subset{<:MultiLevelSet}) =
-    s.parent.sorted ? _mls_cursor(s.parent, s.cells, false; root=s.root) : _default_treeify(s)
-subtree(m::MultiLevelSet, cells::AbstractVector{<:Integer}) = _mls_cursor(m, cells, true)
-subtree(m::MultiLevelSet, s::Subset) = parent(s) === m ? _mls_cursor(m, s.cells, true; root=s.root) :
+treeify(s::Subset{<:MultiLevelSet}, n::Integer) =
+    s.parent.sorted ? _mls_cursor(s.parent, s.cells, false; root=s.root, bucket=n) : _default_treeify(s, Int(n))
+subtree(m::MultiLevelSet, cells::AbstractVector{<:Integer}) =
+    _mls_cursor(m, cells, true; bucket=leaf_capacity(m, Balanced()))
+subtree(m::MultiLevelSet, s::Subset) = parent(s) === m ?
+    _mls_cursor(m, s.cells, true; root=s.root, bucket=leaf_capacity(m, Balanced())) :
     subtree(m, parentpositions(s))
 
 """

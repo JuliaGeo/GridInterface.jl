@@ -61,7 +61,7 @@ for (name, g) in (("HEALPix 8", GrI.levelgrid(hp, 8)), ("IGeo7 6", GrI.levelgrid
     t = @belapsed cellat($g, $p); a = @ballocated cellat($g, $p)
     println(rpad(name, 26), "analytic=", location_is_analytic(g), "  cellat ", fmt(t), ", ", a, " B")
 end
-let g = mls, p = cell_centroid(mls, 100), gt = GridAndTree(mls, GrI.fallback_treeify(GO.Spherical(radius=1.0), mls))
+let g = mls, p = cell_centroid(mls, 100), gt = GridAndTree(mls, GrI.fallback_treeify(GO.Spherical(radius=1.0), mls, 16))
     GrI.fallback_cellat(GO.Spherical(radius=1.0), g, p)
     t = @belapsed GrI.fallback_cellat(GO.Spherical(radius=1.0), $g, $p)
     t2 = @belapsed cellat($gt, $p)
@@ -90,7 +90,7 @@ section("5. multi-level set straight into CR's Regridder")
 dst = GrI.levelgrid(DGG.IGeo7System(), 5)
 R_set = CR.Regridder(cr_tree(dst), cr_tree(mls); threaded=false)
 t_set = @elapsed CR.Regridder(cr_tree(dst), cr_tree(mls); threaded=false)
-rt = GrI.fallback_treeify(GO.Spherical(radius=1.0), mls)
+rt = GrI.fallback_treeify(GO.Spherical(radius=1.0), mls, 16)
 R_rt = CR.Regridder(cr_tree(dst), cr_tree(GridAndTree(mls, rt)); threaded=false)
 t_rt = @elapsed CR.Regridder(cr_tree(dst), cr_tree(GridAndTree(mls, rt)); threaded=false)
 println("IGeo7 5 ← HEALPix multi-level set: ", size(R_set.intersections), " cursor ", fmt(t_set), "; R-tree ", fmt(t_rt),

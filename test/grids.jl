@@ -232,3 +232,61 @@ GOC.best_manifold(::TupleLonLat) = GOC.Spherical(; radius=1.0)
 GrI.cellshape(::TupleLonLat) = GrI.SimpleCells()
 GrI.cell_boundary(::TupleLonLat, i::Integer) =
     SRing(((10.0i, 0.0), (10.0i + 10, 0.0), (10.0i + 10, 10.0), (10.0i, 10.0)))
+
+# ---------------------------------------------------------------------------
+# 6. Explicit connectivity, no keys: a 2 × 2 planar quad mesh (4 cells, 9
+#    vertices) answering the dense vertex verbs from arrays. Its numbering is
+#    analytic, so nothing is built for it and its keys are derived.
+# ---------------------------------------------------------------------------
+struct ExplicitQuads <: GrI.AbstractGrid end
+const _EQ_CELLS = ([1, 2, 5, 4], [2, 3, 6, 5], [4, 5, 8, 7], [5, 6, 9, 8])
+# fans CCW; open fans from the boundary edge where the fan starts
+const _EQ_FANS = ([1], [2, 1], [2], [1, 3], [4, 3, 1, 2], [4, 2], [3], [3, 4], [4])
+GrI.ncells(::ExplicitQuads) = 4
+GOC.best_manifold(::ExplicitQuads) = GOC.Planar()
+GrI.cellshape(::ExplicitQuads) = GrI.ConvexCells()
+GrI.cell_boundary(g::ExplicitQuads, i::Integer) = SRing(ntuple(j -> GrI.vertex_point(g, _EQ_CELLS[i][j]), 4))
+GrI.vertex_numbering_is_analytic(::ExplicitQuads) = true
+GrI.nvertices(::ExplicitQuads) = 9
+GrI.cell_vertices(::ExplicitQuads, i::Integer) = _EQ_CELLS[i]
+GrI.vertex_cells(::ExplicitQuads, v::Integer) = _EQ_FANS[v]
+GrI.vertex_point(::ExplicitQuads, v::Integer) = (Float64((v - 1) % 3), Float64((v - 1) ÷ 3))
+GrI.vertex_isopen(::ExplicitQuads, v::Integer) = v != 5
+
+# The same declaration without the methods: every dense verb is a provider error.
+struct ForgetfulQuads <: GrI.AbstractGrid end
+GrI.ncells(::ForgetfulQuads) = 4
+GOC.best_manifold(::ForgetfulQuads) = GOC.Planar()
+GrI.cellshape(::ForgetfulQuads) = GrI.ConvexCells()
+GrI.cell_boundary(::ForgetfulQuads, i::Integer) = GrI.cell_boundary(ExplicitQuads(), i)
+GrI.vertex_numbering_is_analytic(::ForgetfulQuads) = true
+
+# ---------------------------------------------------------------------------
+# 7. Analytic keys, no numbering: TinyPlanar's lattice naming its vertices by
+#    their lowest cell. The dense numbering is derived (VertexNumbering).
+# ---------------------------------------------------------------------------
+struct KeyedPlanar <: GrI.AbstractGrid
+    nx::Int
+    ny::Int
+end
+GrI.ncells(g::KeyedPlanar) = g.nx * g.ny
+GOC.best_manifold(::KeyedPlanar) = GOC.Planar()
+GrI.cellshape(::KeyedPlanar) = GrI.ConvexCells()
+GrI.cell_boundary(g::KeyedPlanar, i::Integer) = GrI.cell_boundary(TinyPlanar(g.nx, g.ny), i)
+GrI.vertices_are_analytic(::KeyedPlanar) = true
+const _KP_COFF = ((0, 0), (1, 0), (1, 1), (0, 1))     # corner k of cell (cx, cy) is lattice point (cx, cy) + _KP_COFF[k]
+_kp_lattice(g::KeyedPlanar, i, k) = ((i - 1) % g.nx + _KP_COFF[k][1], (i - 1) ÷ g.nx + _KP_COFF[k][2])
+function GrI.vertex_key(g::KeyedPlanar, i::Integer, k::Integer)
+    vx, vy = _kp_lattice(g, Int(i), Int(k))
+    ox, oy = max(vx - 1, 0), max(vy - 1, 0)             # the lowest cell at the lattice point
+    return GrI.VertexKey(ox + g.nx * oy + 1, findfirst(==((vx - ox, vy - oy)), _KP_COFF))
+end
+function GrI.vertex_cells(g::KeyedPlanar, key::GrI.VertexKey)
+    vx, vy = _kp_lattice(g, key.cell, key.corner)
+    quads = ((vx, vy), (vx - 1, vy), (vx - 1, vy - 1), (vx, vy - 1))      # CCW: NE, NW, SW, SE
+    inside(q) = 0 <= q[1] < g.nx && 0 <= q[2] < g.ny
+    # an open fan starts just after the gap
+    start = findfirst(j -> inside(quads[j]) && !inside(quads[mod1(j - 1, 4)]), 1:4)
+    start === nothing && (start = 1)
+    return [q[1] + g.nx * q[2] + 1 for q in (quads[mod1(start + j, 4)] for j in 0:3) if inside(q)]
+end

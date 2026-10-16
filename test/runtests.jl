@@ -172,6 +172,56 @@ end
     @test all(v -> length(vertex_cells(s, v)) in (3, 4), 1:26)
 end
 
+@testset "analytic vertex numbering" begin
+    # explicit connectivity, no keys: nothing is built, the keys are derived
+    m = ExplicitQuads()
+    @test vertex_numbering_is_analytic(m) && !vertices_are_analytic(m)
+    @test dual(m).table === nothing && GridAndVertices(m).table === nothing
+    @test ncells(dual(m)) == 9 && nvertices(GridAndVertices(m)) == 9
+    @test all(v -> vertex_index(m, vertex_key(m, v)) == v, 1:9)
+    @test vertex_key(m, 5) == VertexKey(1, 3) && vertex_key(m, 2, 4) == VertexKey(1, 3) && vertex_key(m, 9) == VertexKey(4, 3)
+    @test all(i -> [vertex_index(m, k) for k in cell_vertex_keys(m, i)] == cell_vertices(m, i), 1:4)
+    @test all(i -> all(k -> vertex_key(m, i, k) == cell_vertex_keys(m, i)[k], 1:4), 1:4)
+    @test all(v -> vertex_cells(m, vertex_key(m, v)) == vertex_cells(m, v), 1:9)
+    @test all(v -> vertex_point(m, vertex_key(m, v)) == vertex_point(m, v), 1:9)
+    @test all(v -> vertex_isopen(m, vertex_key(m, v)) == vertex_isopen(m, v), 1:9)
+    @test count(v -> vertex_isopen(m, v), 1:9) == 8
+    gv = GridAndVertices(m)
+    @test cell_vertices(gv, 2) === cell_vertices(m, 2) && vertex_key(gv, 5) == VertexKey(1, 3)
+    D = dual(m)
+    @test length(cell_boundary(D, 5)) == 4 && cell_centroid(D, 5) == (1.0, 1.0) && cellat(D, (1.1, 0.9)) == 5
+    @test dual_ring_cells(D, 5) == [4, 3, 1, 2] && dual_ring_cells(D, 2) == [0, 0, 2, 1, 0]
+    rep = check_grid(m; name="ExplicitQuads")
+    @test !any(r -> r.status === :fail, rep.results)
+    any(r -> r.status === :fail, rep.results) && print_report(rep)
+    @test any(r -> r.family === :dual && occursin("no vertex precomputation", r.law) && r.status === :pass, rep.results)
+    @test any(r -> r.family === :dual && occursin("derived keyed verbs", r.law) && r.status === :pass, rep.results)
+    # A planar regional dual fails the same two laws as dual(TinyPlanar(3, 2)):
+    # its rings are built per call, and its own (second-order) median dual has
+    # degenerate rings.
+    dual_fails = ["dual cells are valid CCW rings (≥ 3 points)", "forwarding sweep over extent allocates nothing"]
+    rep = check_grid(D; name="dual of ExplicitQuads")
+    @test [r.law for r in rep.results if r.status === :fail] == dual_fails
+    # the declaration without the methods is a provider error, not a silent fallback
+    f = ForgetfulQuads()
+    @test_throws ArgumentError nvertices(f)
+    @test_throws ArgumentError cell_vertices(f, 1)
+    @test_throws ArgumentError vertex_key(f, 1)
+    e = try nvertices(f); nothing catch e; e end
+    @test occursin("vertex_numbering_is_analytic", e.msg) && occursin("nvertices", e.msg)
+    # analytic keys without a numbering: the numbering is derived and held by the dual
+    k = KeyedPlanar(3, 2)
+    @test vertices_are_analytic(k) && !vertex_numbering_is_analytic(k)
+    @test nvertices(k) == 12 && dual(k).table isa GrI.VertexNumbering && GridAndVertices(k).table isa GrI.VertexNumbering
+    @test all(v -> vertex_index(k, vertex_key(k, v)) == v, 1:12)
+    @test collect(cell_vertices(k, 5)) == collect(cell_vertices(TinyPlanar(3, 2), 5))
+    rep = check_grid(k; name="KeyedPlanar")
+    @test !any(r -> r.status === :fail, rep.results)
+    any(r -> r.status === :fail, rep.results) && print_report(rep)
+    rep = check_grid(dual(k); name="dual of KeyedPlanar")
+    @test [r.law for r in rep.results if r.status === :fail] == dual_fails
+end
+
 @testset "hierarchy and multi-level sets" begin
     sys = QuadSystem(6)
     @test ancestor(sys, QuadCell(3, 27), 1) == QuadCell(1, 27 >> 4)
@@ -288,6 +338,86 @@ end
     @test system(lg) === sys && level(lg) == 4
 end
 
+@testset "intents and wrappers" begin
+    maxleaf(t) = STI.isleaf(t) ? length(STI.child_indices_extents(t)) : maximum(maxleaf, STI.getchild(t); init=0)
+    sys = QuadSystem(5); g = levelgrid(sys, 4)
+    @test leaf_capacity(g, Balanced()) == 4 && leaf_capacity(g, ForSweeps()) == 8 && leaf_capacity(g, ForQueries()) == 1
+    ts = treeify(g; leaf_capacity=ForSweeps())
+    @test ts isa HierarchyCursor && ts.bucket == 8
+    @test maxleaf(ts) <= leaf_capacity(g, ForSweeps()) && leaves(ts) == 1:ncells(g)
+    @test maxleaf(treeify(g; leaf_capacity=ForQueries())) == 1
+    @test maxleaf(treeify(g, 3)) <= 3 && leaves(treeify(g, 3)) == 1:ncells(g)
+    @test treeify(g).bucket == 4 && treeify(g, Balanced()) == treeify(g)
+    @test (@allocated treeify(g; leaf_capacity=ForSweeps())) == 0
+    # the R-tree fallback takes the capacity as its node capacity (floored at 2)
+    p = TinyPlanar(6, 5)
+    @test maxleaf(treeify(p; leaf_capacity=ForSweeps())) <= 8 && leaves(treeify(p; leaf_capacity=ForSweeps())) == 1:30
+    @test maxleaf(treeify(p; leaf_capacity=ForQueries())) <= 2 && leaves(treeify(p, 5)) == 1:30
+    @test leaf_capacity(subset(p, 1:4), ForSweeps()) == 8
+    # subtree of a multi-level set takes the capacity on the fallback too
+    m = MultiLevelSet(sys, [QuadCell(1, 0), QuadCell(1, 1), QuadCell(1, 2), QuadCell(2, 12), QuadCell(2, 13), QuadCell(2, 14), QuadCell(2, 15)])
+    @test leaves(treeify(m; leaf_capacity=ForSweeps())) == 1:7 && maxleaf(treeify(m; leaf_capacity=ForQueries())) == 1
+    # GridAndTree: the stored tree for every hint and an integer
+    t = treeify(g)
+    gt = GridAndTree(g, t)
+    for h in (Balanced(), ForSweeps(), ForQueries(), 2)
+        @test treeify(gt; leaf_capacity=h) === t
+        @test treeify(gt, h) === t
+    end
+    @test treeify(gt) === t && treeify(GridAndTree(g; leaf_capacity=ForSweeps())).bucket == 8
+    @test split_weight(gt) == split_weight(t) && subtree_indices(gt) == subtree_indices(t)
+    @test gt isa AbstractWrappedGrid && !(gt isa AbstractGrid) && isgrid(gt) && parent(gt) === g
+    @test isgrid(g) && !isgrid(1) && !isgrid(QuadLevelGrid) && issystem(sys) && !issystem(g) &&
+          iscellindex(QuadCell(1, 0)) && !iscellindex(3)
+    @test grid_extent(gt) == grid_extent(g) && cellat(gt, (0.3, 0.7)) == cellat(g, (0.3, 0.7))
+    # the specific methods win over the forwarding loop
+    spec(f, T, args...) = Base.unwrap_unionall(which(f, Tuple{T,args...}).sig).parameters[2]
+    @test spec(treeify, typeof(gt), ForQueries) === GridAndTree
+    @test spec(treeify, typeof(gt), Int) === GridAndTree
+    @test spec(ncells, typeof(gt)) === AbstractWrappedGrid
+    # mockchunks: chunks is the mock, chunkat agrees, everything else forwards
+    c = mockchunks(g, LevelChunks(2))
+    @test c isa ChunkedGrid && chunks(c) == chunks(g, 2) && length(chunks(c)) == 16 && length(chunks(g)) == 4
+    @test chunkat(c, 100) == chunkat(chunks(g, 2), 100) == 7 && chunkat(g, 100) == 2
+    @test spec(chunks, typeof(c)) === ChunkedGrid
+    for (f, args) in ((ncells, ()), (cellindex, (5,)), (cell_centroid, (7,)), (cell_extent, (9,)), (cell_area, (1,)),
+                      (cellat, ((0.3, 0.7),)), (level, ()), (system, ()), (cellshape, ()), (best_manifold, ()),
+                      (localindex, (QuadCell(4, 7),)), (maxneighbors, (Edge(),)), (grid_extent, ()))
+        @test f(c, args...) == f(g, args...)
+    end
+    @test collect(neighbors(c, 6)) == collect(neighbors(g, 6)) && collect(ring(c, 6, 2)) == collect(ring(g, 6, 2))
+    @test collect(cell_boundary(c, 3)) == collect(cell_boundary(g, 3)) && cellindex(c, 2, QuadCell) == cellindex(g, 2)
+    @test leaves(treeify(c)) == 1:ncells(g) && leaves(subtree(c, [2, 9])) == [2, 9]
+    @test chunks(mockchunks(g, nothing)) === nothing
+    # composition: GridAndTree(mockchunks(subset(g, cells), LevelChunks(k)), t)
+    s = subset(g, 17:48)
+    cs = mockchunks(s, LevelChunks(3))
+    tcs = treeify(cs; leaf_capacity=ForSweeps())     # a tree over the subset's own positions
+    gts = GridAndTree(cs, tcs)
+    @test treeify(gts) === tcs && leaves(treeify(gts)) == 1:32 && chunks(gts) === chunks(cs) && length(chunks(gts)) == 8
+    @test ncells(gts) == 32 && cellindex(gts, 1) == cellindex(s, 1) && parentpositions(gts) == 17:48
+    @test gridrelation(gts) isa ParentGrid && globalindex(gts, cellindex(gts, 3)) == 19
+    @test cell_boundary(gts, 2) == cell_boundary(g, 18) && halo(gts) == halo(s)
+    # the point location of a pair descends its stored tree
+    pt = GridAndTree(p, treeify(p; leaf_capacity=ForQueries()))
+    @test cellat(pt, (2.5, 3.5)) == cellat(p, (2.5, 3.5)) == 21 && cellsat(pt, (2.0, 3.0)) == [14, 15, 20, 21]
+    @test query(pt, Extents.Extent(X=(0.5, 1.5), Y=(0.5, 0.6))) == query(p, Extents.Extent(X=(0.5, 1.5), Y=(0.5, 0.6)))
+    # GridAndVertices holds the vertex table; the dual holds the same one
+    q = TinyPlanar(3, 2)
+    gv = GridAndVertices(q)
+    @test nvertices(gv) == nvertices(q) == 12 && collect(cell_vertices(gv, 1)) == collect(cell_vertices(q, 1))
+    @test (@allocated nvertices(gv)) == 0
+    @test vertex_cells(gv, 5) == vertex_cells(q, 5) && vertex_key(gv, 5) == vertex_key(q, 5)
+    D = dual(gv)
+    @test D.table === gv.table && ncells(D) == 12 && cellat(D, vertex_point(q, 3)) == 3
+    @test dual(q).table isa GrI.VertexTable
+    # no global state: the greps of the outline, on the sources
+    files(d) = [joinpath(r, f) for (r, _, fs) in walkdir(joinpath(@__DIR__, "..", d)) for f in fs if endswith(f, ".jl")]
+    srcs = vcat(files("src"), files("ext"), files("lib"))
+    @test !any(f -> occursin(r"clear_caches!|IdDict|ReentrantLock", read(f, String)), srcs)
+    @test !any(f -> occursin(r"isgrid\(::Type|issystem\(::Type|iscellindex\(::Type", read(f, String)), files("src"))
+end
+
 @testset "conformance" begin
     for (name, g) in (("TinyPlanar", TinyPlanar(4, 3)), ("TinyCubeSphere", TinyCubeSphere(3)),
                       ("MinLonLat (four methods)", MinLonLat(12, 6)),
@@ -309,6 +439,13 @@ end
     fails = [r.law for r in rep.results if r.status === :fail]
     @test fails == ["forwarding sweep over extent allocates nothing"]
     rep = check_system(QuadSystem(5); name="QuadSystem")
+    @test !any(r -> r.status === :fail, rep.results)
+    any(r -> r.status === :fail, rep.results) && print_report(rep)
+    @test any(r -> r.family === :performance && occursin("laziness: cellat", r.law) && r.status === :pass, rep.results)
+    rep = check_laziness(TinyPlanar(4, 3), TinyPlanar(16, 12))
+    @test !any(r -> r.status === :fail, rep.results)
+    any(r -> r.status === :fail, rep.results) && print_report(rep)
+    rep = check_grid(GridAndTree(TinyCubeSphere(2)); name="GridAndTree of TinyCubeSphere")
     @test !any(r -> r.status === :fail, rep.results)
     any(r -> r.status === :fail, rep.results) && print_report(rep)
 end

@@ -36,3 +36,9 @@ for (name, g) in (
     t = @elapsed rep = check_grid(g; name)
     report(rep, t)
 end
+# The laziness law at scale: no verb's bytes scale between a small level and a huge one
+for (name, sys, ls) in (("HEALPix", DGG.HEALPixSystem(), (4, 12)), ("CopernicusDEM(90)", DGG.CopernicusDEMSystem(90), (0, 1)))
+    small, large = GrI.levelgrid(sys, ls[1]), GrI.levelgrid(sys, ls[2])
+    t = @elapsed rep = check_laziness(small, large; name="$name laziness L$(ls[1]) / L$(ls[2])")
+    report(rep, t)
+end

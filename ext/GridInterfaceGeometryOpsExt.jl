@@ -6,24 +6,25 @@ with these.
 
 | hook | what it does |
 |---|---|
-| `fallback_treeify` / `fallback_subtree` | packed STR R-tree over `cell_extent` (caps become XYZ boxes) |
+| `fallback_treeify` / `fallback_subtree` | packed STR R-tree over `cell_extent` with the given node capacity (caps become XYZ boxes) |
 | `fallback_centroid` | planar: `GO.centroid` (or a point on surface); sphere: normalised vertex mean |
 | `fallback_area` | `GO.area(manifold, cell_geometry)` (units of radius²) |
 | `fallback_extent` | planar: bounding box; sphere: vertex cap (CAP_SLACK), whole sphere past π/2 |
 | `fallback_contains` | half-space tests for `ConvexCells` on the sphere, winding number otherwise |
-| `fallback_cellat` / `fallback_cellsat` | descend the cached tree by extent, interior test |
+| `fallback_cellat` / `fallback_cellsat` | descend `treeify(grid; leaf_capacity = ForQueries())` by extent, interior test |
 | `fallback_neighbors` | single ring: shared boundary points, CCW from edge (v1, v2); general: touching |
-| `fallback_vertex_table` | merge corners once (quantised): ≥ 3 cells or boundary, open fans flagged |
+| `fallback_vertex_table` | merge corners (quantised): ≥ 3 cells or boundary, open fans flagged |
 | `fallback_query` | candidates from the tree, then an exact predicate (plane and sphere) |
 
 Every fallback checks the spherical type contract (`UnitSphericalPoint` points,
-`SphericalCap` extents) at its boundary.
+`SphericalCap` extents) at its boundary. Nothing is cached: a fallback that
+needs a tree asks `treeify` per call, which is a `GridAndTree`'s stored tree.
 """
 module GridInterfaceGeometryOpsExt
 
 import GridInterface as GrI
 using GridInterface: ncells, cellshape, cell_boundary, cell_geometry, cell_extent, cell_corners,
-    cell_centroid, treeify, SingleRing, ConvexCells, GeneralCells, Edge, Vertex, Connectivity,
+    cell_centroid, treeify, ForQueries, SingleRing, ConvexCells, GeneralCells, Edge, Vertex, Connectivity,
     check_point, check_extent, check_ring
 const STI = GrI.STI
 import GeometryOps as GO
@@ -33,10 +34,6 @@ import GeometryOpsCore as GOC
 using GeometryOpsCore: Planar, Spherical, Manifold
 import Extents
 import GeoInterface as GI
-
-function __init__()
-    GrI._HAS_BACKEND[] = true
-end
 
 # --- small vector helpers (no LinearAlgebra dependency) ----------------------
 @inline _v(p::UnitSphericalPoint) = (Float64(p[1]), Float64(p[2]), Float64(p[3]))
@@ -378,7 +375,7 @@ function GrI.query_region(::Spherical, ext::Extents.Extent{(:X, :Y)})
 end
 
 # --- queries ------------------------------------------------------------------
-_candidates(m, grid, region) = _candidates_in(m, _cached_tree(grid), GrI.query_region(m, region))
+_candidates(m, grid, region) = _candidates_in(m, _query_tree(grid), GrI.query_region(m, region))
 function _candidates_in(m, tree, q)
     out = Int[]
     STI.depth_first_search(e -> _ext_intersects(e, q), tree) do i
@@ -425,7 +422,7 @@ _test(m, grid, i, ::GrI.Contains, R) = _within(m, R, _cellpolys(m, grid, i))
 function _query_cap(m, grid, pred)
     cap = pred.region
     c = _v(cap.point); r = Float64(cap.radius)
-    cands = _candidates_in(m, _cached_tree(grid), cap)
+    cands = _candidates_in(m, _query_tree(grid), cap)
     return filter!(cands) do i
         if pred isa GrI.CentroidIn
             return _angle(c, _v(cell_centroid(grid, i))) <= r
@@ -472,41 +469,25 @@ GrI.fallback_point_extent(m::Manifold, p) = _point_extent(m, p)
 _box(::Planar, e::Extents.Extent) = e
 _box(m::Spherical, e) = convert(Extents.Extent, check_extent(m, e))
 
-function _rtree(m, grid, cells)
+# The R-tree's node capacity is its fan-out too, so a one-cell leaf (the
+# `ForQueries` capacity) becomes the smallest fan-out it accepts.
+function _rtree(m, grid, cells, n)
     isempty(cells) && throw(ArgumentError("cannot build a tree over no cells"))
     exts = [_box(m, cell_extent(grid, i)) for i in cells]
-    cap = GrI.leaf_capacity(grid)
     return FlexibleRTrees.RTree(FlexibleRTrees.STR(), Base.OneTo(ncells(grid));
-        extents=exts, indices=collect(Int, cells), nodecapacity=cap === nothing ? 16 : Int(cap))
+        extents=exts, indices=collect(Int, cells), nodecapacity=max(Int(n), 2))
 end
-GrI.fallback_treeify(m::Manifold, grid) = _rtree(m, grid, 1:ncells(grid))
-GrI.fallback_subtree(m::Manifold, grid, cells) = _rtree(m, grid, cells)
+GrI.fallback_treeify(m::Manifold, grid, n) = _rtree(m, grid, 1:ncells(grid), n)
+GrI.fallback_subtree(m::Manifold, grid, cells, n) = _rtree(m, grid, cells, n)
 # `split_weight` and `subtree_indices` of the R-tree are GeometryOps' own methods.
 
-# --- per-grid cache for the fallbacks that query repeatedly ------------------
-# Point location, neighbour and query fallbacks would otherwise rebuild an
-# R-tree per call. Keyed by object identity (egal for isbits grids). A grid
-# whose own tree has expensive node extents (CR's quadtree cursor on the
-# sphere) gets an R-tree here instead. `GrI.clear_caches!()` empties it.
-const _TREE_CACHE = IdDict{Any,Any}()
-const _TREE_LOCK = ReentrantLock()
-function _cached_tree(grid)
-    grid isa GrI.GridAndTree && return grid.tree
-    lock(_TREE_LOCK) do
-        get!(() -> _lookup_tree(grid), _TREE_CACHE, grid)
-    end
-end
-function _lookup_tree(grid)
-    t = treeify(grid)
-    # a lazily-extented provider cursor without analytic structure: prefer an R-tree
-    if GrI.system(grid) === nothing && STI.node_extent_is_expensive(typeof(t)) && !(t isa FlexibleRTrees.RTree)
-        return GrI.fallback_treeify(GOC.best_manifold(grid), grid)
-    end
-    return t
-end
+# The tree a per-call fallback descends: the finest one the grid has in O(1),
+# or the stored tree of a GridAndTree. No cache: a caller who locates or
+# queries repeatedly wraps the grid once.
+_query_tree(grid) = treeify(grid; leaf_capacity=ForQueries())
 
-# --- point location (function barriers around the Any-typed cached tree) -----
-GrI.fallback_cellat(m::Manifold, grid, p) = _cellat_in(m, grid, _cached_tree(grid), p)
+# --- point location (function barriers around the tree) ----------------------
+GrI.fallback_cellat(m::Manifold, grid, p) = _cellat_in(m, grid, _query_tree(grid), p)
 function _cellat_in(m, grid, tree, p)
     q = _point_extent(m, p)
     best = Ref(typemax(Int))
@@ -518,7 +499,7 @@ function _cellat_in(m, grid, tree, p)
     end
     return best[] == typemax(Int) ? nothing : best[]
 end
-GrI.fallback_cellsat(m::Manifold, grid, p) = _cellsat_in(m, grid, _cached_tree(grid), p)
+GrI.fallback_cellsat(m::Manifold, grid, p) = _cellsat_in(m, grid, _query_tree(grid), p)
 function _cellsat_in(m, grid, tree, p)
     q = _point_extent(m, p)
     out = Int[]
@@ -595,7 +576,7 @@ _mid(::Planar, a, b) = ((_xy(a)[1] + _xy(b)[1]) / 2, (_xy(a)[2] + _xy(b)[2]) / 2
 _mid(::Spherical, a, b) = _normalize(_add(_v(a), _v(b)))
 
 GrI.fallback_neighbors(m::Manifold, grid, i, conn::Connectivity) =
-    _neighbors_in(m, grid, _cached_tree(grid), i, conn, cellshape(grid))
+    _neighbors_in(m, grid, _query_tree(grid), i, conn, cellshape(grid))
 
 function _neighbors_in(m, grid, tree, i, conn, ::SingleRing)
     ra = check_ring(m, cell_boundary(grid, i))
@@ -796,18 +777,6 @@ function GrI.fallback_vertex_table(m::Manifold, grid)
         vert_ptr[v+1] = length(vert_cells) + 1
     end
     return GrI.VertexTable{P}(points, cell_ptr, cell_verts, cell_corner, vert_ptr, vert_cells, isopen)
-end
-
-function GrI.clear_caches!()
-    lock(_TREE_LOCK) do
-        empty!(_TREE_CACHE)
-    end
-    lock(GrI._VERTEX_LOCK) do
-        empty!(GrI._VERTEX_CACHE)
-        empty!(GrI._NUMBERING_CACHE)
-        GrI._LAST_VT[] = (nothing, nothing)
-    end
-    return nothing
 end
 
 end

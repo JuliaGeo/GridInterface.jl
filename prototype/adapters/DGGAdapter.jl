@@ -44,9 +44,9 @@ const CDEM = DGG.CopernicusDEM.CopernicusDEMSystem
 const HPG = HLG{HP.HEALPixSystem}
 
 # --- recognition --------------------------------------------------------------
-GrI.isgrid(::Type{<:G}) = true
-GrI.issystem(::Type{<:SYS}) = true
-GrI.iscellindex(::Type{<:ID}) = true      # DGG ids cannot subtype GrI.AbstractCellIndex
+GrI.isgrid(::G) = true
+GrI.issystem(::SYS) = true
+GrI.iscellindex(::ID) = true      # DGG ids cannot subtype GrI.AbstractCellIndex
 GrI.level(c::ID) = DGG.level(c)
 
 # --- identity -----------------------------------------------------------------
@@ -230,8 +230,9 @@ GrI.border(pg::DGG.PartialGrid; connectivity::GrI.Connectivity=GrI.Vertex()) =
     GrI.border(parent(pg), GrI.parentpositions(pg); connectivity)
 
 # --- trees and chunks ---------------------------------------------------------------
-# The provider's own tree wins over the generic hierarchy cursor.
-GrI.treeify(g::G) = DGG.treeify(g)
+# The provider's own tree wins over the generic hierarchy cursor. DGG's cursors
+# have one shape, so the capacity every intent maps to is ignored (O(1) as before).
+GrI.treeify(g::G, ::Integer) = DGG.treeify(g)
 "DGG's own tree for a grid (also what `treeify` returns): `GridAndTree(g, dgg_tree(g))`."
 dgg_tree(g) = DGG.treeify(g)
 # DGG's cursors size themselves through CR's `Trees.ncells`; forward it.
@@ -285,7 +286,6 @@ GrI.ancestor(s::SYS, c::ID, l::Integer) = DGG.ancestor(s, c, l)
 # slots of the three other cells (one is missing at a degree-3 vertex).
 const _HP_FAN = ((5, 4, 3), (3, 2, 1), (1, 8, 7), (7, 6, 5))
 GrI.vertices_are_analytic(::HPG) = true
-GrI.nvertices(g::HPG) = DGG.ncells(g) + 2          # Euler: V = F + 2 for a quad tessellation of the sphere
 
 @inline function _hp_corner(g::HPG, i::Int, k::Int)
     nside = 1 << g.level
@@ -325,6 +325,59 @@ function GrI.vertex_key(g::HPG, i::Integer, k::Integer)
 end
 GrI.vertex_cells(g::HPG, key::GrI.VertexKey) = _hp_fan(g, key.cell, key.corner)
 GrI.vertex_point(g::HPG, key::GrI.VertexKey) = _hp_corner(g, key.cell, key.corner)
+
+# Dense vertex numbers, O(1). Lattice point (f, x, y), x, y ∈ 0:N, N = nside. Every
+# face owns x ∈ 0:N-1, y ∈ 1:N (its SW and NW edges and W corner, not its NE or SE
+# edge): each shared edge is NE/SE on one side and SW/NW on the other (face tables
+# in DGG's neighbors.jl), so each non-pole vertex has one owner. The poles (N corner
+# of faces 0:3, S corner of 8:11) are left over and numbered last.
+#   v = f N² + (y - 1) N + x + 1,   north pole 12N² + 1,   south pole 12N² + 2
+GrI.vertex_numbering_is_analytic(::HPG) = true
+
+# Owner of lattice point (f, x, y), or face -1 / -2 for the north / south pole.
+# Crossing NE (x = N) or SE (y = 0): north f ↔ (f+1)%4 via (N,y) ↔ (y,N) and
+# ↔ 4+(f+1)%4 via (x,0) ↔ (x,N); equatorial 4+j ↔ north j via (N,y) ↔ (0,y) and
+# ↔ 8+j via (x,0) ↔ (x,N); south 8+j ↔ 4+(j+1)%4 via (N,y) ↔ (0,y) and
+# ↔ 8+(j+1)%4 via (x,0) ↔ (0,x). An E corner (N, 0) crosses twice.
+@inline function _hp_owner(f::Int, x::Int, y::Int, N::Int)
+    r, j1 = f >> 2, (f + 1) & 3
+    if x == N
+        if r == 0
+            y == N && return (-1, 0, 0)
+            return (j1, y, N)
+        end
+        y > 0 && return (r == 1 ? f & 3 : 4 + j1, 0, y)
+        return (r == 1 ? 4 + j1 : 8 + j1, 0, N)
+    elseif y == 0
+        r == 0 && return (4 + j1, x, N)
+        r == 1 && return (f + 4, x, N)
+        x == 0 && return (-2, 0, 0)
+        return (8 + j1, 0, x)
+    end
+    return (f, x, y)
+end
+function GrI.nvertices(g::HPG)     # Euler: V = F + 2 for a quad tessellation of the sphere
+    N = 1 << g.level
+    return 12 * N * N + 2
+end
+function GrI.vertex_key(g::HPG, v::Integer)
+    lv = g.level; N = 1 << lv; nf = N * N
+    1 <= v <= 12nf + 2 || throw(BoundsError(1:12nf+2, v))
+    v > 12nf && return v == 12nf + 1 ? GrI.vertex_key(g, nf, 1) : GrI.vertex_key(g, 8nf + 1, 3)
+    w = Int(v) - 1
+    f, r = w >> 2lv, w & (nf - 1)
+    x, y = r & (N - 1), r >> lv + 1
+    return GrI.vertex_key(g, HP.xyf_to_nested(x, y - 1, f, N) + 1, 2)   # owner point is the W corner of (x, y-1)
+end
+function GrI.vertex_index(g::HPG, key::GrI.VertexKey)
+    lv = g.level; N = 1 << lv
+    k = key.corner
+    1 <= k <= 4 || throw(BoundsError(1:4, k))
+    ix, iy, f = HP.nested_to_xyf(key.cell - 1, N)
+    fo, x, y = _hp_owner(f, ix + _HP_COFF[k][1], iy + _HP_COFF[k][2], N)
+    fo < 0 && return 12 * N * N - fo
+    return (fo << 2lv) + ((y - 1) << lv) + x + 1
+end
 
 # --- multi-order sets -------------------------------------------------------------
 """

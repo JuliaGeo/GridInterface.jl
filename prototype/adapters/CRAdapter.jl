@@ -7,7 +7,8 @@
 #     subset (`TileIndices`) whose extent, subtree and tree are O(1).
 # (b) The bridge back: the unit CR's engine consumes is a grid paired with a
 #     tree. `cr_tree(GridAndTree(grid, tree))` (or `cr_tree(grid)`, which pairs
-#     the grid with `treeify(grid)`) is a `Trees`-compatible STI tree, so CR's
+#     the grid with `treeify(grid; leaf_capacity = ForSweeps())`, the sweep
+#     intent) is a `Trees`-compatible STI tree, so CR's
 #     unmodified `Regridder` accepts ANY GridInterface grid:
 #         Regridder(cr_tree(dst), cr_tree(src))            # any GI grid
 #         Regridder(dst, src)                              # GI-native grid types (Subset, MultiLevelSet, GridAndTree, ...)
@@ -51,7 +52,7 @@ struct CRTree{G,T}
 end
 CRTree(gt::GridAndTree) = CRTree(gt, gt.tree)
 cr_tree(gt::GridAndTree) = CRTree(gt)
-cr_tree(g) = CRTree(GridAndTree(g))
+cr_tree(g) = CRTree(GridAndTree(g; leaf_capacity=GrI.ForSweeps()))   # CR runs a dual-tree sweep
 
 STI.isspatialtree(::Type{<:CRTree}) = true
 STI.node_extent_is_expensive(::Type{CRTree{G,T}}) where {G,T} = STI.node_extent_is_expensive(T)
@@ -74,8 +75,8 @@ GrI.subtree_indices(t::CRTree) = GrI.subtree_indices(t.node)
 Trees.cell_index_count(t::CRTree) = GrI.ncells(t.grid)
 GOC.best_manifold(t::CRTree) = GOC.best_manifold(t.grid)
 
-# GridInterface-native grid types (including GridAndTree) go straight into Regridder(dst, src).
-Trees.treeify(::GOC.Manifold, g::GrI.AbstractGrid; kw...) = cr_tree(g)
+# GridInterface-native grid types (including the wrappers) go straight into Regridder(dst, src).
+Trees.treeify(::GOC.Manifold, g::Union{GrI.AbstractGrid,GrI.AbstractWrappedGrid}; kw...) = cr_tree(g)
 
 """
     regridder(dst, src; kw...) -> CR.Regridder
@@ -100,7 +101,7 @@ end
 # (a) CR's curvilinear grids as GridInterface grids
 # =============================================================================
 const ACG = Trees.AbstractCurvilinearGrid
-GrI.isgrid(::Type{<:ACG}) = true
+GrI.isgrid(::ACG) = true
 _n1(g) = Trees.ncells(g, 1)
 GrI.ncells(g::ACG) = Trees.ncells(g, 1) * Trees.ncells(g, 2)
 @inline function _ij(g, k::Integer)
@@ -109,8 +110,9 @@ GrI.ncells(g::ACG) = Trees.ncells(g, 1) * Trees.ncells(g, 2)
     return (k - 1) % n + 1, (k - 1) ÷ n + 1
 end
 # Positions are CR's column-major linear index i + (j-1)·n1, which is what CR's
-# quadtree cursor emits, so the cursor IS this grid's tree.
-GrI.treeify(g::ACG) = Trees.TopDownQuadtreeCursor(g)
+# quadtree cursor emits, so the cursor IS this grid's tree (one shape, 2×2
+# leaves: the capacity an intent maps to is ignored).
+GrI.treeify(g::ACG, ::Integer) = Trees.TopDownQuadtreeCursor(g)
 GrI.split_weight(q::Trees.TopDownQuadtreeCursor) = Trees.split_weight(q)
 GrI.cell_extent(g::ACG, k::Integer) = ((i, j) = _ij(g, k); Trees.cell_range_extent(g, i:i, j:j))
 GrI.extent_is_expensive(g::ACG) = Trees.extent_is_expensive(g)
@@ -245,7 +247,7 @@ STI.node_extent(c::TileCursor) = STI.node_extent(c.q)
 STI.child_indices_extents(c::TileCursor) = map(((k, e),) -> (_loc(c, k), e), STI.child_indices_extents(c.q))
 GrI.split_weight(c::TileCursor) = GrI.split_weight(c.q)
 GrI.subtree_indices(c::TileCursor) = map(k -> _loc(c, k), GrI.subtree_indices(c.q))
-function GrI.treeify(s::TileSubset)
+function GrI.treeify(s::TileSubset, ::Integer)
     t = parentpositions(s)
     return TileCursor(Trees.TopDownQuadtreeCursor(parent(s), (t.ir, t.jr)), first(t.ir), first(t.jr), length(t.ir), t.n1)
 end
@@ -280,9 +282,9 @@ HealpixRootNode; positions are the map's own pixel order + 1).
 function adapt_healpix!(Healpix::Module)
     @eval begin
         const HM = $(Healpix).HealpixMap
-        GrI.isgrid(::Type{<:HM}) = true
+        GrI.isgrid(::HM) = true
         GrI.ncells(m::HM) = length(m)
-        GrI.treeify(m::HM) = Trees.treeify(GO.Spherical(), m)
+        GrI.treeify(m::HM, ::Integer) = Trees.treeify(GO.Spherical(), m)
         const HExt = Base.get_extension(CR, :ConservativeRegriddingHealpixExt)
         GrI.split_weight(n::Union{HExt.HealpixRootNode,HExt.HealpixTreeNode}) = Trees.split_weight(n)
         GrI.cellshape(::HM) = GrI.SimpleCells()

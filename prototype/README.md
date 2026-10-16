@@ -67,7 +67,7 @@ buf = UnitSphericalPoint{Float64}[]; cell_boundary!(buf, g, 17)   # reuse a buff
 cellsize(g), isglobal(g), cell_geometry_is_expensive(g)
 p = cell_centroid(g, 17); cellat(g, p)   # 17, analytic, 0 bytes
 ll = lonlat_grid(36, 18)                 # CR CellBasedGrid on the sphere
-cellat(ll, cell_centroid(ll, 100))       # 100, through the cached fallback R-tree
+cellat(ll, cell_centroid(ll, 100))       # 100, descending CR's quadtree cursor (the provider's tree) per call
 cellsat(ll, cell_corners(ll, 100)[3])    # every cell containing a point (4 at a corner)
 ```
 
@@ -75,9 +75,10 @@ cellsat(ll, cell_corners(ll, 100)[3])    # every cell containing a point (4 at a
 
 ```julia
 treeify(g)                               # DGG's HierarchicalGridCursor (provider wins)
+treeify(g; leaf_capacity = ForSweeps())  # the intent; DGG's cursor has one shape and ignores the capacity
 gt = GridAndTree(g)                      # pair with treeify(g); or GridAndTree(g, GrI.hierarchy_tree(g))
-GrI.split_weight(gt) == ncells(g)        # forwarded
-leaf_capacity(g), root_index(DGG.CopernicusDEMSystem(90)) isa RootIndex
+GrI.split_weight(gt) == ncells(g)        # forwarded; treeify(gt; leaf_capacity = ...) is the stored tree
+leaf_capacity(g, ForSweeps()), root_index(DGG.CopernicusDEMSystem(90)) isa RootIndex
 ```
 
 ### Queries
