@@ -7,7 +7,8 @@ import GeometryOps as GO, GeometryOpsCore as GOC, GeoInterface as GI
 using DiscreteGlobalGrids
 import DiscreteGlobalGrids as DGG
 include(joinpath(@__DIR__, "adapters", "CRAdapter.jl")); using .CRAdapter
-import Healpix; adapt_healpix!(Healpix)
+import Healpix
+const HPExt = Base.get_extension(CR, :ConservativeRegriddingHealpixExt)      # HealpixMapGrid: CR's own provider
 
 report(rep, t) = (print_report(rep); println("  (", round(t; digits=1), " s)"); flush(stdout))
 
@@ -57,7 +58,7 @@ for (name, g) in (
         ("CR RegularGrid 20x10 (Planar)", structured(Trees.RegularGrid(GOC.Planar(), collect(0.0:1.0:20.0), collect(0.0:1.0:10.0)))),
         ("CR RegularGrid lon/lat 36x18 (Spherical)", lonlat_grid(36, 18; cellbased=false)),
         ("CR ExplicitPolygonGrid sheared 8x6 (Planar)", structured(Trees.ExplicitPolygonGrid(GOC.Planar(), polys))),
-        ("Healpix.HealpixMap nside 4 via CR ext", Healpix.HealpixMap{Float64,Healpix.RingOrder}(4)))
+        ("Healpix.HealpixMap nside 4 (CR's HealpixMapGrid)", HPExt.HealpixMapGrid(Healpix.HealpixMap{Float64,Healpix.RingOrder}(4))))
     t = @elapsed rep = check_grid(g; name)
     report(rep, t)
 end

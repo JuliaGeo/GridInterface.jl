@@ -30,8 +30,8 @@ end
 _seamflag(given, detect) = given === nothing ? detect() : NTuple{2,Bool}(given)
 function _polefan(g, collapsed, b)
     ni, nj = facesize(g, 1)
-    collapsed[1] && b == 1 && return collect(ni:-1:1)
-    collapsed[2] && b == nj + 1 && return Int[(nj - 1) * ni + i for i in 1:ni]
+    collapsed[1] && b == 1 && return Int[faceposition(g, 1, i, 1) for i in ni:-1:1]
+    collapsed[2] && b == nj + 1 && return Int[faceposition(g, 1, i, nj) for i in 1:ni]
     return nothing
 end
 function _facefan(g, periodic, collapsed, f, a, b)

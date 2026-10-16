@@ -42,14 +42,16 @@ import Extents
 import GeoInterface as GI
 
 include("faces.jl")
+include("seams.jl")
 include("grids.jl")
 include("quadtree.jl")
 include("tiles.jl")
 
 export AbstractStructuredGrid, isstructured
 export nfaces, facesize, facevertex, faceposition, facecell
-export hasfaceaxes, faceaxes, facecoords, faceperiod, facelocalindex
+export hasfaceaxes, faceaxes, facecoords, faceperiod, facelocalindex, facecolumnmajor
 export facecross, facefan
+export FaceSeams, seamcross, MaskedCursor
 export CellBasedGrid, RegularGrid, ExplicitPolygonGrid
 
 end

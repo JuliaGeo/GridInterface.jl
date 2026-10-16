@@ -70,7 +70,7 @@ Trees.getcell(t::CRTree) = (GrI.cell_geometry(t.grid, i) for i in 1:GrI.ncells(t
 # (whose default is 1 on a GI tree, and GI's default is 1 on a foreign one).
 _sw(n) = max(GrI.split_weight(n), Trees.split_weight(n))
 Trees.split_weight(t::CRTree) = _sw(t.node)
-Trees.ncells(t::CRTree) = _sw(t.node)
+Trees.ncells(t::CRTree) = GrI.ncells(t.grid)   # the cell count (CR's SE operators size the FV side by it); not the split weight
 GrI.split_weight(t::CRTree) = _sw(t.node)
 GrI.subtree_indices(t::CRTree) = GrI.subtree_indices(t.node)
 Trees.cell_index_count(t::CRTree) = GrI.ncells(t.grid)
@@ -143,36 +143,6 @@ function lonlat_grid(nlon, nlat; manifold=GOC.Spherical(), cellbased=true)
 end
 
 cr_grid_names() = ["CellBasedGrid lon/lat (Spherical)", "RegularGrid (Planar)", "RegularGrid (Spherical)",
-    "ExplicitPolygonGrid (Planar)", "CellBasedGrid warped curvilinear (Spherical)", "Healpix.HealpixMap (CR ext)"]
-
-# =============================================================================
-# (a') Healpix.HealpixMap through CR's Healpix extension (when Healpix is loaded)
-# =============================================================================
-"""
-    adapt_healpix!(Healpix)
-
-Load-time hook: call after `import Healpix` to make `Healpix.HealpixMap` a
-GridInterface grid through CR's Healpix extension (its tree is CR's
-HealpixRootNode; positions are the map's own pixel order + 1).
-"""
-function adapt_healpix!(Healpix::Module)
-    @eval begin
-        const HM = $(Healpix).HealpixMap
-        GrI.isgrid(::HM) = true
-        GrI.ncells(m::HM) = length(m)
-        GrI.treeify(m::HM, ::Integer) = Trees.treeify(GO.Spherical(), m)
-        const HExt = Base.get_extension(CR, :ConservativeRegriddingHealpixExt)
-        GrI.split_weight(n::Union{HExt.HealpixRootNode,HExt.HealpixTreeNode}) = Trees.split_weight(n)
-        GrI.cellshape(::HM) = GrI.SimpleCells()
-        GrI.edgekind(::HM) = GrI.CurvedEdges()
-        GrI.isglobal(::HM) = true
-        GrI.cell_geometry(m::HM, i::Integer) = Trees.getcell(GrI.treeify(m), Int(i))
-        function GrI.cell_boundary(m::HM, i::Integer)
-            ring = collect(GI.getpoint(GI.getexterior(GrI.cell_geometry(m, i))))
-            return ring[1:end-1]
-        end
-    end
-end
-export adapt_healpix!
+    "ExplicitPolygonGrid (Planar)", "CellBasedGrid warped curvilinear (Spherical)"]
 
 end

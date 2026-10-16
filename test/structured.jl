@@ -179,6 +179,33 @@ _sameptr(a, b) = all(abs.(a .- b) .< 1e-9)
             @test x[1] == f2 && x[4] == s2 && Structured.facecross(cube, x[1], x[2], x[3], x[4]) == (f, i, j, s)
         end
     end
+    # FaceSeams finds the hand table from the corner vertices; seamcross is facecross
+    fs = FaceSeams(cube)
+    @test count(x -> x[1] != 0, fs.across) == 24
+    for f in 1:6, s in 1:4
+        @test fs.across[s, f] == _CUBE_SEAMS[f][s][1:2]
+        for p in 1:3
+            i, j = _cube_sidecell(3, s, p)
+            @test seamcross(fs, cube, f, i, j, s) == Structured.facecross(cube, f, i, j, s)
+        end
+    end
+    @test (@allocated seamcross(fs, cube, 1, 1, 1, 1)) == 0
+    # a periodic single face is its own seam; a regional one has none
+    @test FaceSeams(cb).across[2, 1] == (1, 4) && FaceSeams(cb).across[4, 1] == (1, 2) && FaceSeams(cb).across[1, 1] == (0, 0)
+    @test all(==((0, 0)), FaceSeams(rg).across)
+    # MaskedCursor: a subset of a structured grid keeps the quadtree; leaves emit members only
+    members = [3, 4, 17, 18, 19, 40, 41, 50, 51, 52, 53, 54]
+    ms = subset(cube, members)
+    mt = treeify(ms)
+    @test mt isa MaskedCursor && sort!(walk(mt)) == 1:12 && sort(subtree_indices(mt)) == 1:12
+    @test sort!(walk(subtree(cube, members))) == members && sort(subtree_indices(subtree(cube, members))) == members
+    @test split_weight(mt) == ncells(cube) && STI.node_extent(mt) == STI.node_extent(treeify(cube))
+    @test maxleaf(treeify(ms; leaf_capacity=ForQueries())) <= 4
+    @test cellat(ms, cell_centroid(cube, 50)) == 8 && cellat(ms, cell_centroid(cube, 5)) === nothing
+    # the laws on a whole-face subset; a Subset's grid_extent (the members' union)
+    # and its pair's (the tree root) differ for every Subset, masked tree or not
+    rep = check_grid(subset(cube, 10:18); name="Subset of TinyCubeSphere (masked quadtree)")
+    @test all(r -> r.status !== :fail || occursin("WRAPPED_VERBS", r.law), rep.results)
     for i in (1, 14, 40)
         js = neighbors(cube, i); c = cell_centroid(cube, i)
         @test length(unique(js)) == length(js) && !(i in js)

@@ -60,7 +60,7 @@ Lazy vector of the `ti × tj` tiles of every face (edge tiles smaller),
 face-major and column-major over the tiles of a face; what `chunks(grid)`
 returns for a structured grid. `chunkat` is O(1).
 """
-struct TileChunks{G} <: AbstractVector{TileSubset{G}}
+struct TileChunks{G} <: AbstractVector{Subset{G}}
     grid::G
     ti::Int
     tj::Int
@@ -86,7 +86,9 @@ function Base.getindex(c::TileChunks, k::Int)
     a, b = divrem(k0 - 1, cld(ni, c.ti))
     ir = (b * c.ti + 1):min((b + 1) * c.ti, ni)
     jr = (a * c.tj + 1):min((a + 1) * c.tj, nj)
-    return Subset(c.grid, TileIndices(c.grid, f, ir, jr))
+    t = TileIndices(c.grid, f, ir, jr)
+    facecolumnmajor(c.grid, f) || return Subset(c.grid, sort!(collect(t)))     # positions not in lattice order
+    return Subset(c.grid, t)
 end
 function GrI.chunkat(c::TileChunks, p::Integer)
     f, i, j = _facecell(c.grid, p)

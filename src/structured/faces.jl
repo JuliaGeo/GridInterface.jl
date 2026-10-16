@@ -115,6 +115,18 @@ function _axisfloor(xs, v, period)
 end
 
 """
+    facecolumnmajor(grid, f) -> Bool
+
+Whether the positions of face `f` ascend with `i` fastest, then `j`
+(`faceposition(grid, f, i, j) == faceposition(grid, f, 1, 1) + (i - 1) + (j - 1) * ni`),
+so a lattice block's positions are strictly ascending in lattice order and
+a tile chunk keeps its block in its type. Default `true` (the three concrete
+grids); a face whose data order is something else (ring order, a
+space-filling curve) answers `false` and its tiles are sorted subsets.
+"""
+facecolumnmajor(grid, f) = true
+
+"""
     facecross(grid, f, i, j, side) -> (f2, i2, j2, side2) | nothing
 
 The cell across lattice side `side` of cell `(i, j)` on face `f`, with the
@@ -475,8 +487,10 @@ end
 @inline _finish(s::SmallVector) = s
 @inline _finish(v::Vector{Int}) = unique!(v)
 
-function GrI.neighbors(g::AbstractStructuredGrid, k::Integer; connectivity::Connectivity=Vertex())
-    k = Int(k)
+GrI.neighbors(g::AbstractStructuredGrid, k::Integer; connectivity::Connectivity=Vertex()) =
+    _structured_neighbors(g, Int(k), connectivity)
+# the derivation on its own, for a provider that post-processes it
+function _structured_neighbors(g, k::Int, connectivity::Connectivity)
     f, i, j = _facecell(g, k)
     across = (_across(g, f, i, j, 1), _across(g, f, i, j, 2), _across(g, f, i, j, 3), _across(g, f, i, j, 4))
     if connectivity isa Edge

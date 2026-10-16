@@ -185,3 +185,68 @@ function subtree_indices(t::FaceRootTree)
 end
 block_indices(t::FaceRootTree) = Base.OneTo(ncells(t.grid))
 Base.show(io::IO, t::FaceRootTree) = print(io, "FaceRootTree(", nfaces(t.grid), " faces)")
+
+# ---------------------------------------------------------------------------
+# A masked quadtree: the grid's own tree over a strictly ascending set of
+# member positions. Nodes and extents are the parent tree's (they still
+# cover), leaves skip non-members by binary search. What a `Subset` of a
+# structured grid (a wet mask, the unique cells of a folded row) answers to
+# `treeify`, and what `subtree(grid, cells)` answers.
+# ---------------------------------------------------------------------------
+
+"""
+    MaskedCursor{L}(node, cells)
+
+`node` (a [`TopDownQuadtreeCursor`](@ref) or a [`FaceRootTree`](@ref), or
+any node of one) restricted to the strictly ascending parent positions
+`cells`: the same nodes and extents, leaves emitting only members, as their
+index in `cells` when `L` is `true` (a subset's own positions) or as the
+parent positions when `false` (a subtree in the grid). `split_weight` is the
+parent node's (an upper bound), `subtree_indices` the members under the node.
+"""
+struct MaskedCursor{Q,V<:AbstractVector{Int},L}
+    node::Q
+    cells::V
+end
+MaskedCursor{L}(node::Q, cells::V) where {Q,V,L} = MaskedCursor{Q,V,L}(node, cells)
+_masked(m::MaskedCursor{Q,V,L}, node) where {Q,V,L} = MaskedCursor{typeof(node),V,L}(node, m.cells)
+
+STI.isspatialtree(::Type{<:MaskedCursor}) = true
+STI.node_extent_is_expensive(::Type{<:MaskedCursor{Q}}) where {Q} = STI.node_extent_is_expensive(Q)
+STI.isleaf(m::MaskedCursor) = STI.isleaf(m.node)
+STI.nchild(m::MaskedCursor) = STI.nchild(m.node)
+STI.getchild(m::MaskedCursor, k::Int) = _masked(m, STI.getchild(m.node, k))
+STI.getchild(m::MaskedCursor) = (_masked(m, c) for c in STI.getchild(m.node))
+STI.node_extent(m::MaskedCursor) = STI.node_extent(m.node)
+split_weight(m::MaskedCursor) = split_weight(m.node)
+
+@inline function _member(cells, p::Int)
+    k = searchsortedfirst(cells, p)
+    return (k <= length(cells) && @inbounds(cells[k]) == p) ? k : 0
+end
+function STI.child_indices_extents(m::MaskedCursor{Q,V,L}) where {Q,V,L}
+    es = STI.child_indices_extents(m.node)
+    out = es.e
+    n = 0
+    for (p, e) in es
+        k = _member(m.cells, p)
+        k == 0 && continue
+        n += 1
+        out = Base.setindex(out, (L ? k : p, e), n)
+    end
+    return LeafEntries(n, out)
+end
+function subtree_indices(m::MaskedCursor{Q,V,L}) where {Q,V,L}
+    out = Int[]
+    for p in subtree_indices(m.node)
+        k = _member(m.cells, p)
+        k == 0 || push!(out, L ? k : p)
+    end
+    return out
+end
+Base.show(io::IO, m::MaskedCursor) = print(io, "MaskedCursor(", m.node, ", ", length(m.cells), " members)")
+
+GrI.treeify(s::Subset{<:AbstractStructuredGrid}, n::Integer) =
+    MaskedCursor{true}(treeify(s.parent, n), s.cells)
+GrI.subtree(g::AbstractStructuredGrid, cells::AbstractVector{<:Integer}) =
+    MaskedCursor{false}(treeify(g, leaf_capacity(g, Balanced())), GrI._intvec(cells))

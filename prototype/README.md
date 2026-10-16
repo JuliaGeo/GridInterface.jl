@@ -11,7 +11,7 @@ CR's grids GridInterface grids lives in `prototype/adapters/`.
 | file | what it does |
 |---|---|
 | `setup_env.jl` | (re)creates `env/` (run once) |
-| `adapters/CRAdapter.jl` | (a) CR's curvilinear grids (with raster-tile chunks) and `Healpix.HealpixMap` as GI grids; (b) `CRTree`, the bridge that lets `CR.Regridder` consume any `GridAndTree` |
+| `adapters/CRAdapter.jl` | (a) CR's curvilinear grids as their `Structured` twins; (b) `CRTree`, the bridge that lets `CR.Regridder` consume any `GridAndTree` (the climate grids and `Healpix.HealpixMap` are providers inside CR's extensions since Phase 6; `ConservativeRegriddingTestHelpers.grid_of` names them) |
 | `conformance.jl` | conformance on every DGG grid and every adapted CR grid (about 3 min) |
 | `bench.jl` | round-one performance laws and regrid parity (about 6 min) |
 | `../test/revision_bench.jl` | revision benchmarks: analytic vertices, root index, split_weight, lazy chunks, halo, queries, four-method regrid |
@@ -26,7 +26,7 @@ import GridInterface as GrI
 using DiscreteGlobalGrids; import DiscreteGlobalGrids as DGG
 using GridInterface: cell_extent, cellat   # DGG exports its own (a lon/lat box, a typed id)
 include("/home/anshul/geo/gridinterface/GridInterface.jl/prototype/adapters/CRAdapter.jl"); using .CRAdapter
-import Healpix; adapt_healpix!(Healpix)   # optional: HealpixMap through CR's Healpix extension
+import Healpix; HealpixMapGrid = Base.get_extension(CR, :ConservativeRegriddingHealpixExt).HealpixMapGrid   # CR's own HealpixMap provider
 import Extents, GeometryOps as GO, GeometryOpsCore as GOC
 ```
 
