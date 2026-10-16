@@ -4,15 +4,15 @@
 `lib/SpatialTreeInterfaceShim` and `lib/GridInterfaceConformance`,
 ConservativeRegridding (CR), GlobalRegridding and DiscreteGlobalGrids (DGG),
 and adds GeometryOps, GeometryOpsCore, Extents, GeoInterface, Healpix,
-BenchmarkTools and Test. Neither CR nor DGG is modified: everything that makes
-them GridInterface grids lives in `prototype/adapters/`.
+BenchmarkTools and Test. DGG is a GridInterface provider itself (its grid verbs
+are GridInterface's bindings, its cursors are GridInterface trees); what makes
+CR's grids GridInterface grids lives in `prototype/adapters/`.
 
 | file | what it does |
 |---|---|
 | `setup_env.jl` | (re)creates `env/` (run once) |
-| `adapters/DGGAdapter.jl` | DGG systems, level grids, partial grids and multi-order sets as GI systems/grids; DGG's own trees; aligned HEALPix neighbours; analytic HEALPix vertices |
 | `adapters/CRAdapter.jl` | (a) CR's curvilinear grids (with raster-tile chunks) and `Healpix.HealpixMap` as GI grids; (b) `CRTree`, the bridge that lets `CR.Regridder` consume any `GridAndTree` |
-| `conformance.jl` | conformance on every adapted grid (about 3 min) |
+| `conformance.jl` | conformance on every DGG grid and every adapted CR grid (about 3 min) |
 | `bench.jl` | round-one performance laws and regrid parity (about 6 min) |
 | `../test/revision_bench.jl` | revision benchmarks: analytic vertices, root index, split_weight, lazy chunks, halo, queries, four-method regrid |
 
@@ -23,7 +23,8 @@ them GridInterface grids lives in `prototype/adapters/`.
 # then:  julia --project=/home/anshul/geo/gridinterface/GridInterface.jl/prototype/env
 using GridInterface, GridInterfaceConformance
 import GridInterface as GrI
-include("/home/anshul/geo/gridinterface/GridInterface.jl/prototype/adapters/DGGAdapter.jl"); using .DGGAdapter
+using DiscreteGlobalGrids; import DiscreteGlobalGrids as DGG
+using GridInterface: cell_extent, cellat   # DGG exports its own (a lon/lat box, a typed id)
 include("/home/anshul/geo/gridinterface/GridInterface.jl/prototype/adapters/CRAdapter.jl"); using .CRAdapter
 import Healpix; adapt_healpix!(Healpix)   # optional: HealpixMap through CR's Healpix extension
 import Extents, GeometryOps as GO, GeometryOpsCore as GOC
@@ -137,7 +138,7 @@ nvertices(h3), dual_ring_cells(dual(h3), 1)
 levels(hp), rootcells(hp)[1:3], children(hp, rootcells(hp)[1])
 descendant_range(hp, rootcells(hp)[1], 2), ancestor(hp, c, 1)
 set = DGG.query(hp, DGG.MultiOrderCoverage(box); level=8)
-mls = dgg_multilevel(set)                # O(1) wrap of DGG's MultiOrderCellSet
+mls = set                                # DGG's MultiOrderCellSet is a multi-level grid
 chunks(mls, 4)                           # a member coarser than level 4 is its own chunk
 treeify(subset(mls, 1:50))               # window mode on a subset of a set
 em = expand_to_reference(mls)            # behaviour 1: expand, regrid, aggregate (aggregation_pairs)

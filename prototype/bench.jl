@@ -2,7 +2,9 @@
 #   julia --project=prototype/env prototype/bench.jl
 using GridInterface, BenchmarkTools, Test, SparseArrays, LinearAlgebra
 import GridInterface as GrI
-include(joinpath(@__DIR__, "adapters", "DGGAdapter.jl")); using .DGGAdapter
+using DiscreteGlobalGrids
+import DiscreteGlobalGrids as DGG
+using GridInterface: cell_extent, cellat   # DGG exports its own (a lon/lat box, a typed id)
 include(joinpath(@__DIR__, "adapters", "CRAdapter.jl")); using .CRAdapter
 import Extents, GeometryOps as GO, GeometryOpsCore as GOC
 const FB = DGG.Fallbacks
@@ -20,7 +22,7 @@ direct_set_centroid(set) = (s = 0.0; sys = set.system; for c in set.cells; s += 
 section("1. per-cell geometry: level grids and a multi-level set (type stability, allocation)")
 hp = DGG.HEALPixSystem()
 set = DGG.query(hp, DGG.MultiOrderCoverage(Extents.Extent(X=(-10.0, 30.0), Y=(35.0, 60.0))); level=10)
-mls = dgg_multilevel(set)
+mls = set                                  # a MultiOrderCellSet is a GridInterface multi-level grid
 println("HEALPix multi-order set: ", ncells(mls), " members, levels ", extrema(GrI.level.(mls.cells)), ", antichain ", GrI.check_antichain(mls))
 for (name, g, direct) in (("HEALPix level 6", GrI.levelgrid(hp, 6), direct_centroid),
                           ("IGeo7 level 5", GrI.levelgrid(DGG.IGeo7System(), 5), direct_centroid),
@@ -49,6 +51,15 @@ println("multi-level set: treeify ", fmt(tm), ", ", am, " B")
 let g = GrI.levelgrid(DGG.A5System(), 4)
     t = @belapsed treeify($g); a = @ballocated treeify($g)
     println("A5 level 4 (selection mode, ", ncells(g), " cells): treeify ", fmt(t), ", ", a, " B  (O(n): materialises the selection)")
+end
+
+let cg = GrI.levelgrid(DGG.CopernicusDEMSystem(90), 1)          # 6.9e10 cells
+    mt = treeify(cg, GrI.ForQueries())
+    tiny = GO.UnitSpherical.SphericalCap(GO.UnitSphereFromGeographic()((10.123, 45.456)), 1e-7)
+    hits(t, q) = (n = Ref(0); GO.SpatialTreeInterface.depth_first_search(e -> Extents.intersects(e, q), t) do i; n[] += 1; nothing; end; n[])
+    nl = hits(mt, tiny)
+    t = @belapsed $hits($mt, $tiny)
+    println("CopernicusDEM(90) L1: treeify(ForQueries()) is ", nameof(typeof(mt)), "; a point query reaches ", nl, " leaves in ", fmt(t))
 end
 
 section("3. cellat on analytic grids")

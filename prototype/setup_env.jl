@@ -23,6 +23,7 @@ Pkg.develop([
 ])
 Pkg.add(["BenchmarkTools", "GeometryOpsCore", "SmallCollections", "Extents", "GeoInterface", "Test",
          "Healpix", "SparseArrays", "LinearAlgebra", "StaticArrays", "Random"])
+Pkg.resolve()
 Pkg.instantiate()
 @time using GridInterface, DiscreteGlobalGrids, ConservativeRegridding
 println("LOADED")

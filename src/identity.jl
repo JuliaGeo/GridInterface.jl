@@ -64,6 +64,7 @@ and multi-level sets).
 """
 function level end
 level(grid) = nothing
+level(c::AbstractCellIndex) = throw(MethodError(level, (c,)))   # required on ids, not defaulted
 
 @noinline _throw_bounds(grid, i) = throw(BoundsError(grid, i))
 

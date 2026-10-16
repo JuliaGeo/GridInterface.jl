@@ -244,7 +244,7 @@ version = "0.30.2"
     StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 
 [[deps.DiscreteGlobalGrids]]
-deps = ["ConservativeRegridding", "DE9IM", "DimensionalData", "DiskArrays", "Extents", "GeoInterface", "GeometryOps", "GeometryOpsCore", "GlobalRegridding", "H3_jll", "Healpix", "SmallCollections", "Statistics", "Tables"]
+deps = ["ConservativeRegridding", "DE9IM", "DimensionalData", "DiskArrays", "Extents", "GeoInterface", "GeometryOps", "GeometryOpsCore", "GlobalRegridding", "GridInterface", "H3_jll", "Healpix", "SmallCollections", "Statistics", "Tables"]
 path = "/home/anshul/.julia/dev/geo/gridinterface/DiscreteGlobalGrids.jl"
 uuid = "443be784-8f3c-41ab-9ff0-108bddc7e690"
 version = "0.1.0"

@@ -3,7 +3,9 @@
 using GridInterface, BenchmarkTools, SparseArrays
 import GridInterface as GrI
 const PROTO = joinpath(@__DIR__, "..", "prototype")
-include(joinpath(PROTO, "adapters", "DGGAdapter.jl")); using .DGGAdapter
+using DiscreteGlobalGrids
+import DiscreteGlobalGrids as DGG
+using GridInterface: cell_extent, cellat, Intersects, Within, Contains   # DGG exports its own (a lon/lat box, a typed id, DE9IM predicates)
 include(joinpath(PROTO, "adapters", "CRAdapter.jl")); using .CRAdapter
 import Extents, GeometryOps as GO, GeometryOpsCore as GOC
 using GeometryOps.UnitSpherical: UnitSphericalPoint

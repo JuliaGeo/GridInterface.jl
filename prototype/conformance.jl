@@ -1,16 +1,41 @@
-# Conformance on every adapted grid.
+# Conformance on every DGG grid (DiscreteGlobalGrids is a GridInterface
+# provider itself) and every adapted CR grid.
 #   julia --project=prototype/env prototype/conformance.jl
 using GridInterface, GridInterfaceConformance
 import GridInterface as GrI, Extents
 import GeometryOps as GO, GeometryOpsCore as GOC, GeoInterface as GI
-include(joinpath(@__DIR__, "adapters", "DGGAdapter.jl")); using .DGGAdapter
+using DiscreteGlobalGrids
+import DiscreteGlobalGrids as DGG
 include(joinpath(@__DIR__, "adapters", "CRAdapter.jl")); using .CRAdapter
 import Healpix; adapt_healpix!(Healpix)
 
 report(rep, t) = (print_report(rep); println("  (", round(t; digits=1), " s)"); flush(stdout))
 
+"The registered DGG systems plus CopernicusDEM(90), with a small level for conformance runs (H3 at an odd level too)."
+const DGG_SYSTEMS = [
+    ("HEALPix", HEALPixSystem(), 3),
+    ("IGeo7", IGeo7System(), 3),
+    ("H3", H3System(), 2),
+    ("H3 (odd level)", H3System(), 1),
+    ("ISEA4R", ISEA4RSystem(), 3),
+    ("S2", S2System(), 3),
+    ("A5", A5System(), 2),
+    ("CopernicusDEM(90)", CopernicusDEMSystem(90), 0),
+]
+
+# A DGG level grid is a GridInterface grid as it stands (no adapter), and DGG's
+# cursors answer every `treeify` intent: the hierarchy cursor on the true
+# hierarchies, CopernicusDEM's block cursor (never the generic hierarchy cursor).
+let g = GrI.levelgrid(DGG.HEALPixSystem(), 4), cg = GrI.levelgrid(DGG.CopernicusDEMSystem(90), 1)
+    for how in (GrI.ForQueries(), GrI.ForSweeps(), GrI.Balanced(), 16)
+        @assert treeify(g, how) isa DGG.Engine.HierarchicalGridCursor
+        @assert treeify(cg, how) isa DGG.CopernicusDEM.MemoBlockCursor
+    end
+    t = @elapsed rep = check_grid(g; name="HEALPix L4 (DGG level grid, no adapter)")
+    report(rep, t)
+end
 # DGG systems: hierarchy laws + one level grid + a sample multi-level set
-for (name, sys, l) in dgg_systems()
+for (name, sys, l) in DGG_SYSTEMS
     t = @elapsed rep = check_system(sys; name, grid_level=l)
     report(rep, t)
 end
@@ -20,7 +45,7 @@ for (name, sys) in (("HEALPix", DGG.HEALPixSystem()), ("IGeo7", DGG.IGeo7System(
     t = @elapsed rep = check_grid(pg; name="$name PartialGrid (subtree of root 2 to level 4)")
     report(rep, t)
     set = DGG.query(sys, DGG.MultiOrderCoverage(Extents.Extent(X=(-10.0, 30.0), Y=(35.0, 60.0))); level=6)
-    t = @elapsed rep = check_multilevel(dgg_multilevel(set); name="$name MultiOrderCoverage Europe, level ≤ 6")
+    t = @elapsed rep = check_multilevel(set; name="$name MultiOrderCoverage Europe, level ≤ 6")
     report(rep, t)
 end
 # CR grids, through their Structured twins (what any consumer given a CR grid builds)
