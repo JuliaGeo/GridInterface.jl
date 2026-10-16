@@ -88,6 +88,40 @@ end
     @test leaves(treeify(s)) == 1:16
 end
 
+@testset "subtree_indices under a root index" begin
+    # STI's default: leaf indices depth-first, in traversal order
+    walk(n) = STI.isleaf(n) ? Int[i for (i, _) in STI.child_indices_extents(n)] :
+              reduce(vcat, (walk(c) for c in STI.getchild(n)); init=Int[])
+    allnodes(n) = STI.isleaf(n) ? Any[n] : reduce(vcat, (allnodes(c) for c in STI.getchild(n)); init=Any[n])
+    agrees(t) = all(n -> collect(subtree_indices(n)) == walk(n), allnodes(t))
+    rq = RootedQuad(QuadSystem(5)); lg = levelgrid(rq.q, 3)
+    t = GrI.HierarchyCursor(GrI.LevelFrontier(lg, rq, 3))
+    groups = filter(n -> n.gl >= 1, allnodes(t))      # the top node and four groups of four roots
+    @test length(groups) == 5
+    for g in groups
+        @test collect(subtree_indices(g)) == walk(g)
+        @test length(subtree_indices(g)) == (g.gl == 2 ? 64 : 16)
+    end
+    @test agrees(t)
+    @test sort(subtree_indices(t)) == 1:64
+    keys = [3, 9, 17, 18, 40, 41, 60]
+    for emit in (false, true)
+        st = GrI.HierarchyCursor(GrI.SubsetFrontier(lg, rq, 3, keys, emit))
+        @test agrees(st)
+        @test sort(subtree_indices(st)) == (emit ? keys : 1:7)
+    end
+    m = MultiLevelSet(rq, [QuadCell(2, 0), QuadCell(3, 4), QuadCell(3, 5), QuadCell(3, 6), QuadCell(3, 7),
+                           QuadCell(2, 2), QuadCell(2, 9), QuadCell(3, 60)])
+    mt = treeify(m)
+    @test mt isa HierarchyCursor && any(n -> n.gl >= 1, allnodes(mt))
+    @test agrees(mt)
+    @test sort(subtree_indices(mt)) == 1:ncells(m)
+    @test agrees(subtree(m, [2, 5, 7]))
+    gt = GridAndTree(lg, t)
+    @test subtree_indices(gt) == subtree_indices(t)
+    @test split_weight(gt) == split_weight(t) == 64
+end
+
 @testset "subsets and chunks" begin
     g = TinyPlanar(4, 3)
     s = subset(g, [2, 3, 6, 7])

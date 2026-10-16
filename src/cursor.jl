@@ -9,8 +9,13 @@
 #   fr_level(F,k)  the member's level
 #   fr_id(F,k)     the member's typed id
 #   fr_emit(F,k)   the position the leaf emits for member k
+#   fr_emitted(F,ks) the positions emitted for window indices `ks`, lazily
 #   fr_extent(F,k) the member's own extent
 # ===========================================================================
+
+# Identity-emitting frontiers answer the window itself; key-emitting ones a
+# view of their keys. `subtree_indices` of a cursor is O(1) through this.
+@inline fr_emitted(F, ks::AbstractVector{Int}) = ks
 
 """
     LevelFrontier(grid, sys, ref)
@@ -51,6 +56,7 @@ fr_keys(F::SubsetFrontier) = F.keys
 @inline fr_level(F::SubsetFrontier, k) = F.ref
 @inline fr_emit(F::SubsetFrontier{G,S,K,true}, k) where {G,S,K} = @inbounds F.keys[k]
 @inline fr_emit(F::SubsetFrontier{G,S,K,false}, k) where {G,S,K} = k
+@inline fr_emitted(F::SubsetFrontier{G,S,K,true}, ks::AbstractVector{Int}) where {G,S,K} = view(F.keys, ks)
 @inline fr_id(F::SubsetFrontier, k) = cellindex(F.grid, fr_emit(F, k))
 @inline fr_extent(F::SubsetFrontier, k) = cell_extent(F.grid, fr_emit(F, k))
 _fr_extent_is_expensive(F::SubsetFrontier) = extent_is_expensive(F.grid)
@@ -188,6 +194,20 @@ function split_weight(n::HierarchyCursor)
     span = min(ri.fanout^min(n.gl, 8), nr)     # roots under one group at this level
     return max(1, (c * span) ÷ nr)
 end
+# A root-index group keeps its parent's window, so its leaves are gathered from
+# the windows of its own roots, in index order (roots are in STR order).
+function subtree_indices(n::HierarchyCursor)
+    _isgroup(n) || return fr_emitted(n.fr, n.lo:n.hi)
+    ri = n.ri
+    nr = length(ri.ids)
+    span = n.gl > length(ri.exts) ? nr : ri.fanout^n.gl   # roots under one group at this level
+    out = Int[]
+    for k in (n.gk - 1) * span + 1:min(n.gk * span, nr)
+        c = _child(n, @inbounds ri.ids[k])
+        append!(out, fr_emitted(n.fr, c.lo:c.hi))
+    end
+    return out
+end
 
 function STI.isleaf(n::HierarchyCursor)
     k = _count(n)
@@ -317,6 +337,7 @@ end
 STI.isspatialtree(::Type{<:SelectionCursor}) = true
 STI.node_extent_is_expensive(::Type{<:SelectionCursor}) = true
 split_weight(n::SelectionCursor) = length(n.sel)
+subtree_indices(n::SelectionCursor) = fr_emitted(n.fr, n.sel)
 
 function STI.isleaf(n::SelectionCursor)
     k = length(n.sel)

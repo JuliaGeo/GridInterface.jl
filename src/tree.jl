@@ -67,7 +67,7 @@ the polygon counterpart is [`cell_geometry_is_expensive`](@ref).)
 """
 extent_is_expensive(grid) = true
 
-# `split_weight` is owned by the STI shim (it moves with the split); GridInterface
+# `split_weight` and `subtree_indices` are SpatialTreeInterface's; GridInterface
 # adds methods for its own trees and wrappers.
 
 """

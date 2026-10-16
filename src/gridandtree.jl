@@ -10,7 +10,8 @@ What flows into an engine (a conservative regridder, a chunked plan): a grid
 paired with a tree. Engines ask the tree traversal questions and the grid
 everything else (cells, polygons, areas, manifold), so the tree itself needs
 no reference back to its grid. The pair forwards every grid verb to `grid`,
-returns `tree` from `treeify`, and forwards [`split_weight`](@ref) to `tree`.
+returns `tree` from `treeify`, and forwards `split_weight` and `subtree_indices`
+to `tree`.
 
 Wrap once to reuse an expensive tree (an R-tree, a cap-cached cursor, a
 provider's own tree) wherever a grid is accepted. With
@@ -28,6 +29,7 @@ GridAndTree(grid) = GridAndTree(grid, treeify(grid))
 treeify(g::GridAndTree) = g.tree
 Base.parent(g::GridAndTree) = g.grid
 split_weight(g::GridAndTree) = split_weight(g.tree)
+subtree_indices(g::GridAndTree) = subtree_indices(g.tree)
 
 # Every grid verb forwards. Kept as explicit lists so the conformance suite can
 # check them against the verbs it knows.

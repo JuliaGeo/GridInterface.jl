@@ -61,24 +61,13 @@ function clear_caches! end
 # clipper, so the core refuses it up front, here, at the fallback boundary.
 # ---------------------------------------------------------------------------
 
-"""
-    UnitSphericalPoint
-
-The point type of every spherical grid: a unit 3-vector (GeometryOps'
-`UnitSpherical.UnitSphericalPoint`). Boundaries, corners, centroids and query
-points on a `Spherical` manifold must be these; convert lon/lat with
-`GeometryOps.UnitSphereFromGeographic()`.
-"""
-const UnitSphericalPoint = UnitSpherical.UnitSphericalPoint
-"""
-    SphericalCap
-
-The extent type of every spherical grid (GeometryOps' `UnitSpherical.SphericalCap`):
-a centre `UnitSphericalPoint` and an angular radius. `cell_extent`, `node_extent`
-and chunk extents on a `Spherical` manifold must be caps; `Extents.union` and
-`Extents.intersects` are defined on them.
-"""
-const SphericalCap = UnitSpherical.SphericalCap
+# `UnitSphericalPoint` is the point type of every spherical grid: a unit
+# 3-vector. Boundaries, corners, centroids and query points on a `Spherical`
+# manifold must be these; convert lon/lat with `UnitSphereFromGeographic()`.
+# `SphericalCap` is its extent type: a centre point and an angular radius.
+# `cell_extent`, `node_extent` and chunk extents on a `Spherical` manifold must
+# be caps; `Extents.union` and `Extents.intersects` are defined on them. Both
+# are imported from UnitSphericalGeometryCore in GridInterface.jl.
 
 "Whether manifold `m` is curved (spherical or ellipsoidal): the unit-sphere types are required."
 iscurved(::Spherical) = true
@@ -87,11 +76,11 @@ iscurved(::Any) = false
 
 @noinline _throw_point_type(m, p) = throw(ArgumentError(
     "GridInterface: on $(nameof(typeof(m))) manifolds points must be " *
-    "`UnitSphericalPoint`s (GeometryOps.UnitSpherical), got $(typeof(p)). " *
-    "Convert lon/lat with `GeometryOps.UnitSphereFromGeographic()((lon, lat))`."))
+    "`UnitSphericalPoint`s (UnitSphericalGeometryCore), got $(typeof(p)). " *
+    "Convert lon/lat with `UnitSphereFromGeographic()((lon, lat))`."))
 @noinline _throw_extent_type(m, e) = throw(ArgumentError(
     "GridInterface: on $(nameof(typeof(m))) manifolds extents must be " *
-    "`SphericalCap`s (GeometryOps.UnitSpherical), got $(typeof(e))."))
+    "`SphericalCap`s (UnitSphericalGeometryCore), got $(typeof(e))."))
 
 """
     check_point(manifold, p) -> p

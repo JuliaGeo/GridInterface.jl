@@ -13,7 +13,8 @@
 #         Regridder(dst, src)                              # GI-native grid types (Subset, MultiLevelSet, GridAndTree, ...)
 #         regridder(dst, src)                              # the same, refusing unsupported cell shapes up front
 #     `split_weight` forwards through the bridge (GridInterface's for GI trees,
-#     CR's own for CR/DGG trees), so CR's task split sees the real work estimate.
+#     CR's own for CR/DGG trees), so CR's task split sees the real work estimate;
+#     so does `subtree_indices`.
 #
 #   include("prototype/adapters/CRAdapter.jl"); using .CRAdapter
 module CRAdapter
@@ -27,8 +28,8 @@ import GeometryOpsCore as GOC
 using GeometryOps.UnitSpherical: UnitSphericalPoint
 import GeoInterface as GI
 using StaticArrays: SVector
+import SpatialTreeInterface as STI
 
-const STI = GrI.STI
 export CR, Trees, CRTree, cr_tree, regridder, lonlat_grid, cr_grid_names, TileIndices, TileChunks, TileCursor
 
 # =============================================================================
@@ -42,7 +43,7 @@ STI tree that forwards traversal to `node` (the pair's tree, or a node of it,
 whose leaves emit positions of the grid) and answers CR's cell-access hooks from
 the grid: `getcell(t, i) = cell_geometry(grid, i)`, `cell_index_count(t) =
 ncells(grid)`, `best_manifold(t) = best_manifold(grid)`,
-`split_weight(t) = split_weight(node)`.
+`split_weight(t) = split_weight(node)`, `subtree_indices(t) = subtree_indices(node)`.
 """
 struct CRTree{G,T}
     grid::G
@@ -69,6 +70,7 @@ _sw(n) = max(GrI.split_weight(n), Trees.split_weight(n))
 Trees.split_weight(t::CRTree) = _sw(t.node)
 Trees.ncells(t::CRTree) = _sw(t.node)
 GrI.split_weight(t::CRTree) = _sw(t.node)
+GrI.subtree_indices(t::CRTree) = GrI.subtree_indices(t.node)
 Trees.cell_index_count(t::CRTree) = GrI.ncells(t.grid)
 GOC.best_manifold(t::CRTree) = GOC.best_manifold(t.grid)
 
@@ -242,6 +244,7 @@ STI.getchild(c::TileCursor, i::Int) = _wrap(c, STI.getchild(c.q, i))
 STI.node_extent(c::TileCursor) = STI.node_extent(c.q)
 STI.child_indices_extents(c::TileCursor) = map(((k, e),) -> (_loc(c, k), e), STI.child_indices_extents(c.q))
 GrI.split_weight(c::TileCursor) = GrI.split_weight(c.q)
+GrI.subtree_indices(c::TileCursor) = map(k -> _loc(c, k), GrI.subtree_indices(c.q))
 function GrI.treeify(s::TileSubset)
     t = parentpositions(s)
     return TileCursor(Trees.TopDownQuadtreeCursor(parent(s), (t.ir, t.jr)), first(t.ir), first(t.jr), length(t.ir), t.n1)

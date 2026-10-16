@@ -1,9 +1,0 @@
-name = "SpatialTreeInterfaceShim"
-uuid = "a74db724-4c08-4a12-bcbe-fcb75b25fd50"
-version = "0.0.1"
-
-[deps]
-GeometryOps = "3251bfac-6a57-4b6d-aa61-ac1fef2975ab"
-
-[compat]
-GeometryOps = "0.1.47"

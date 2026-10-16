@@ -189,6 +189,22 @@ function GrI.neighbors(g::QuadLevelGrid, i::Integer; connectivity::GrI.Connectiv
 end
 GrI.chunks(g::QuadLevelGrid) = g.level >= 1 ? GrI.hierarchy_chunks(g, 1) : nothing
 
+# The quadtree seen from level 2: 16 roots behind a fanout-4 root index, so the
+# generic cursor has group nodes between its synthetic root and the roots.
+struct RootedQuad{RI} <: GrI.AbstractHierarchicalGridSystem
+    q::QuadSystem
+    ri::RI
+end
+RootedQuad(q::QuadSystem; fanout=4) = RootedQuad(q, GrI.RootIndex(RootedQuad(q, nothing); fanout))
+GrI.root_index(s::RootedQuad) = s.ri
+GrI.levels(s::RootedQuad) = 2:s.q.maxlevel
+GrI.rootcells(::RootedQuad) = Tuple(QuadCell(2, k) for k in 0:15)
+GrI.children(s::RootedQuad, c::QuadCell) = GrI.children(s.q, c)
+GrI.levelgrid(s::RootedQuad, l::Integer) = GrI.levelgrid(s.q, l)
+GrI.has_sorted_subtrees(::RootedQuad) = true
+GrI.descendant_range(s::RootedQuad, c::QuadCell, l::Integer) = GrI.descendant_range(s.q, c, l)
+GrI.node_extent(::RootedQuad, c::QuadCell) = _quadbox(c)
+
 # ---------------------------------------------------------------------------
 # 5. The four-method spherical grid: lon/lat cells with great-circle edges.
 #    Pole cells repeat the pole point (their corners collapse to three).

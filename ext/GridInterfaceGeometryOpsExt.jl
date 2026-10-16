@@ -481,10 +481,7 @@ function _rtree(m, grid, cells)
 end
 GrI.fallback_treeify(m::Manifold, grid) = _rtree(m, grid, 1:ncells(grid))
 GrI.fallback_subtree(m::Manifold, grid, cells) = _rtree(m, grid, cells)
-
-GrI.split_weight(t::FlexibleRTrees.RTree) = length(t.indices)
-GrI.split_weight(n::FlexibleRTrees.RTreeNode) =
-    n.tree.nodecapacity^(length(n.tree.levels) - 1 - n.level)
+# `split_weight` and `subtree_indices` of the R-tree are GeometryOps' own methods.
 
 # --- per-grid cache for the fallbacks that query repeatedly ------------------
 # Point location, neighbour and query fallbacks would otherwise rebuild an

@@ -18,9 +18,9 @@ neighbours, dual grid, hierarchical systems); a grid opts into each.
 With those four (and GeometryOps loaded) a grid gets centroids, areas,
 extents, a tree, point location, neighbours, vertices, the dual, queries and
 conformance. On a spherical (or ellipsoidal) manifold points must be
-`UnitSphericalPoint`s and extents `SphericalCap`s (GeometryOps' `UnitSpherical`,
-re-exported by the shim as `GridInterface.UnitSpherical`); the core refuses
-other types up front.
+`UnitSphericalPoint`s and extents `SphericalCap`s (from
+`UnitSphericalGeometryCore`, re-exported here); the core refuses other types
+up front.
 
 The contract is duck-typed: [`AbstractGrid`](@ref) is an optional convenience
 supertype; types that already have a supertype elsewhere (DGG grids, CR
@@ -33,22 +33,15 @@ GeometryOps is loaded; the core reaches them only through the hooks in
 """
 module GridInterface
 
-# --- The one tree import --------------------------------------------------------
-# `STI` is GeometryOps.SpatialTreeInterface and `UnitSpherical` is
-# GeometryOps.UnitSpherical, re-exposed by a one-file shim package that stands in
-# for SpatialTreeInterface.jl and the unit-sphere split. `split_weight` is owned
-# there. Nothing else from GeometryOps is imported anywhere under src/.
-using SpatialTreeInterfaceShim: STI
-import SpatialTreeInterfaceShim
-"""
-    UnitSpherical
-
-GeometryOps' unit-sphere module (points, caps, arcs), re-exposed through the
-`SpatialTreeInterfaceShim` until the spherical types move to a light package.
-See [`UnitSphericalPoint`](@ref) and [`SphericalCap`](@ref).
-"""
-const UnitSpherical = SpatialTreeInterfaceShim.UnitSpherical
-import SpatialTreeInterfaceShim: split_weight
+# --- The tree and unit-sphere imports ------------------------------------------
+# SpatialTreeInterface owns the tree verbs (`split_weight`, `subtree_indices`
+# included; GridInterface adds methods for its own trees and wrappers) and
+# UnitSphericalGeometryCore the spherical point and cap types. Both are the
+# sub-packages GeometryOps itself is built on, so nothing under src/ touches
+# GeometryOps.
+import SpatialTreeInterface as STI
+import SpatialTreeInterface: split_weight, subtree_indices
+import UnitSphericalGeometryCore: UnitSphericalPoint, SphericalCap, UnitSphereFromGeographic
 # -------------------------------------------------------------------------------
 
 import GeometryOpsCore as GOC
@@ -80,9 +73,9 @@ export cell_geometry, cell_boundary, cell_boundary!, cell_corners, cell_centroid
 export cellsize, cell_geometry_is_expensive, isglobal
 export Tessellation, Tessellating, Overlapping, tessellation
 export cellat, cellsat, cell_contains, location_is_analytic
-export UnitSphericalPoint, SphericalCap   # (GridInterface.UnitSpherical: the module itself)
+export UnitSphericalPoint, SphericalCap
 # --- tree
-export treeify, subtree, GridAndTree, split_weight, extent_is_expensive, leaf_capacity, grid_extent
+export treeify, subtree, GridAndTree, split_weight, subtree_indices, extent_is_expensive, leaf_capacity, grid_extent
 export query, query_candidates, query_region, QueryPredicate, Intersects, Within, Contains, CentroidIn
 export RootIndex, root_index
 # --- subsets and chunks

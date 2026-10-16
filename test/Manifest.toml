@@ -2,7 +2,7 @@
 
 julia_version = "1.13.0"
 manifest_format = "2.1"
-project_hash = "884c0799b6e6e97d98c404de4a31d60c59b7919d"
+project_hash = "0de5d12b4b2148dfa562dac643273b506daa2447"
 
 [[deps.AbstractTrees]]
 git-tree-sha1 = "2d9c9a55f9c93e8887ad391fbae72f8ef55e1177"
@@ -143,9 +143,8 @@ version = "1.6.2"
     RecipesBase = "3cdcf5f2-1ef4-517c-9805-6587b60abb01"
 
 [[deps.GeometryOps]]
-deps = ["AbstractTrees", "AdaptivePredicates", "CoordinateTransformations", "DataAPI", "DelaunayTriangulation", "ExactPredicates", "Extents", "GeoFormatTypes", "GeoInterface", "GeometryOpsCore", "LinearAlgebra", "PrecompileTools", "Random", "SortTileRecursiveTree", "StaticArrays", "Statistics", "Tables"]
-git-tree-sha1 = "b0d208d68332d90d632d9bb4303e0b55ca8fb13c"
-registries = "General"
+deps = ["AdaptivePredicates", "CoordinateTransformations", "DataAPI", "DelaunayTriangulation", "ExactPredicates", "Extents", "GeoFormatTypes", "GeoInterface", "GeometryOpsCore", "LinearAlgebra", "PrecompileTools", "Random", "SortTileRecursiveTree", "SpatialTreeInterface", "StaticArrays", "Statistics", "Tables", "UnitSphericalGeometryCore"]
+path = "/home/anshul/.julia/dev/geo/GeometryOps-split"
 uuid = "3251bfac-6a57-4b6d-aa61-ac1fef2975ab"
 version = "0.1.47"
 
@@ -175,7 +174,7 @@ uuid = "05efe853-fabf-41c8-927e-7063c8b9f013"
 version = "0.1.12"
 
 [[deps.GridInterface]]
-deps = ["Extents", "GeoInterface", "GeometryOpsCore", "SpatialTreeInterfaceShim"]
+deps = ["Extents", "GeoInterface", "GeometryOpsCore", "SpatialTreeInterface", "UnitSphericalGeometryCore"]
 path = ".."
 uuid = "7bba8399-ed35-4924-b5cf-83e2b32b3972"
 version = "0.0.1"
@@ -383,11 +382,15 @@ registries = "General"
 uuid = "746ee33f-1797-42c2-866d-db2fce69d14d"
 version = "0.1.4"
 
-[[deps.SpatialTreeInterfaceShim]]
-deps = ["GeometryOps"]
-path = "../lib/SpatialTreeInterfaceShim"
-uuid = "a74db724-4c08-4a12-bcbe-fcb75b25fd50"
-version = "0.0.1"
+[[deps.SpatialTreeInterface]]
+deps = ["Extents", "GeoInterface"]
+path = "/home/anshul/.julia/dev/geo/GeometryOps-split/SpatialTreeInterface"
+uuid = "bf42099b-6274-40f2-a94d-272408263a4f"
+version = "1.0.0"
+weakdeps = ["SortTileRecursiveTree"]
+
+    [deps.SpatialTreeInterface.extensions]
+    SpatialTreeInterfaceSortTileRecursiveTreeExt = "SortTileRecursiveTree"
 
 [[deps.StableTasks]]
 git-tree-sha1 = "c4f6610f85cb965bee5bfafa64cbeeda55a4e0b2"
@@ -470,6 +473,12 @@ version = "1.11.0"
 [[deps.Unicode]]
 uuid = "4ec0a83e-493e-50e2-b9ac-8f72acf5a8f5"
 version = "1.11.0"
+
+[[deps.UnitSphericalGeometryCore]]
+deps = ["CoordinateTransformations", "Extents", "GeoFormatTypes", "GeoInterface", "LinearAlgebra", "Random", "StaticArrays"]
+path = "/home/anshul/.julia/dev/geo/GeometryOps-split/UnitSphericalGeometryCore"
+uuid = "374d2b58-edf9-4f97-868a-42ae1c074d0a"
+version = "0.1.0"
 
 [[deps.Zlib_jll]]
 deps = ["Libdl"]

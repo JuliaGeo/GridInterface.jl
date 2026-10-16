@@ -204,6 +204,7 @@ fr_n(F::MLSFrontier) = length(F.pos)
 @inline fr_id(F::MLSFrontier, k) = @inbounds F.s.cells[F.pos[k]]
 @inline fr_emit(F::MLSFrontier{M,V,true}, k) where {M,V} = @inbounds F.pos[k]
 @inline fr_emit(F::MLSFrontier{M,V,false}, k) where {M,V} = k
+@inline fr_emitted(F::MLSFrontier{M,V,true}, ks::AbstractVector{Int}) where {M,V} = view(F.pos, ks)
 @inline fr_extent(F::MLSFrontier, k) = cell_extent(F.s, @inbounds F.pos[k])
 _fr_extent_is_expensive(F::MLSFrontier) = extent_is_expensive(F.s)
 
