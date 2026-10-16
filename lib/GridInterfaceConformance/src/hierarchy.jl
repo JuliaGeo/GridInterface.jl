@@ -1,13 +1,16 @@
 """
-    check_system(sys; name, levels_checked = 3, depth = 2, nsamples = 24) -> ConformanceReport
+    check_system(sys; name, levels_checked = 3, depth = 2, nsamples = 24,
+                 seed = DEFAULT_SEED, rng = nothing) -> ConformanceReport
 
 Hierarchy laws on a system, plus the hierarchy performance laws, plus
 `check_grid` on a small level grid and the multi-level-set laws on a small set
 built from the system.
 """
 function check_system(sys; name::AbstractString=string(nameof(typeof(sys))), levels_checked::Int=3,
-        depth::Int=2, nsamples::Int=24, grid_level=nothing, quiet::Bool=true)
-    rep = ConformanceReport(String(name))
+        depth::Int=2, nsamples::Int=24, grid_level=nothing, seed::Integer=DEFAULT_SEED,
+        rng::Union{Nothing,Random.AbstractRNG}=nothing, quiet::Bool=true)
+    rng, seed = sampling_rng(seed, rng)
+    rep = ConformanceReport(String(name); seed)
     F = :hierarchy
     Ls = collect(GrI.levels(sys))
     l0 = first(Ls)
@@ -21,7 +24,7 @@ function check_system(sys; name::AbstractString=string(nameof(typeof(sys))), lev
         rc == [cellindex(g, i) for i in 1:ncells(g)] && issorted(rc)
     end
     guarded!(rep, F, "level(c) on ids of every checked level") do
-        all(l -> (g = GrI.levelgrid(sys, l); all(i -> GrI.level(cellindex(g, i)) == l, sample_positions(ncells(g), 8))),
+        all(l -> (g = GrI.levelgrid(sys, l); all(i -> GrI.level(cellindex(g, i)) == l, sample_positions(rng, ncells(g), 8))),
             Ls[1:min(end, levels_checked + 1)])
     end
     guarded!(rep, F, "level grids answer system and level") do
@@ -44,17 +47,17 @@ function check_system(sys; name::AbstractString=string(nameof(typeof(sys))), lev
         lg = GrI.levelgrid(sys, l)
         ch = GrI.chunks(lg, l0)
         ok = length(ch) == ncells(GrI.levelgrid(sys, l0))
-        for i in sample_positions(ncells(lg), 32)
+        for i in sample_positions(rng, ncells(lg), 32)
             j = GrI.chunkat(ch, i)
             ok &= i in GrI.parentpositions(ch[j])
         end
         ok
     end
     # bushy walk: roots and their descendants for `depth` levels
-    walk = _bushy(sys, depth, nsamples)
+    walk = _bushy(sys, depth, nsamples, rng)
     guarded!(rep, F, "parent/children inverses; children ascending, one level down") do
         ok = true
-        for c in walk[sample_positions(length(walk), 4nsamples)]
+        for c in walk[sample_positions(rng, length(walk), 4nsamples)]
             GrI.level(c) >= last(Ls) && continue
             ch = collect(GrI.children(sys, c))
             ok &= issorted(ch) && !isempty(ch)
@@ -65,17 +68,49 @@ function check_system(sys; name::AbstractString=string(nameof(typeof(sys))), lev
     guarded!(rep, F, "ancestor agrees with the parent loop") do
         all(c -> GrI.ancestor(sys, c, l0) == _rootof(sys, c), walk)
     end
+    # the children of all level-l cells partition level l+1, and every level-(l+1)
+    # cell has exactly one parent: exhaustive on small levels, sampled above
+    guarded!(rep, F, "children of every level-l cell partition level l+1 (exhaustive below 50k cells, sampled above)") do
+        ok = true; detail = ""
+        for l in Ls[1:min(end - 1, levels_checked)]
+            lg, fg = GrI.levelgrid(sys, l), GrI.levelgrid(sys, l + 1)
+            if ncells(fg) <= 50_000
+                seen = zeros(Int, ncells(fg))
+                for i in 1:ncells(lg), d in GrI.children(sys, cellindex(lg, i))
+                    j = localindex(fg, d)
+                    j === nothing && (ok = false; detail = "child $d of $(cellindex(lg, i)) is not in level $(l + 1)"; break)
+                    seen[j] += 1
+                end
+                ok && extrema(seen) != (1, 1) && (ok = false; detail = "level $(l + 1) is covered $(extrema(seen)) times by the children of level $l")
+            else
+                for j in sample_positions(rng, ncells(fg), 32)
+                    d = cellindex(fg, j)
+                    count(==(d), GrI.children(sys, Base.parent(sys, d))) == 1 || (ok = false; detail = "$d is not exactly once among its parent's children")
+                end
+            end
+            ok || break
+        end
+        ok, detail
+    end
     if GrI.has_sorted_subtrees(sys)
-        guarded!(rep, F, "descendant_range exact against a children-recursion oracle") do
-            ok = true
-            for c in walk[sample_positions(length(walk), 12)], dl in 0:2
+        guarded!(rep, F, "descendant_range is a UnitRange{Int} exact against a children-recursion oracle") do
+            ok = true; detail = ""
+            for c in walk[sample_positions(rng, length(walk), 12)], dl in 0:2
                 l = GrI.level(c) + dl
                 l > last(Ls) && continue
+                r = GrI.descendant_range(sys, c, l)
+                r isa UnitRange{Int} || (ok = false; detail = "descendant_range($c, $l) is a $(typeof(r))"; break)
                 lg = GrI.levelgrid(sys, l)
-                pos = sort!([localindex(lg, d) for d in _descend(sys, c, l)])
-                ok &= pos == collect(GrI.descendant_range(sys, c, l))
+                actual = _descend(sys, c, l)
+                # a range wildly wider than the descendant set is itself the
+                # violation; materialising it to say so would exhaust memory
+                length(r) > 8 * length(actual) + 64 && (ok = false; detail = "descendant_range($c, $l) spans $(length(r)) positions for $(length(actual)) descendants"; break)
+                pos = sort!([localindex(lg, d) for d in actual])
+                if pos != collect(r)
+                    ok = false; detail = "descendant_range($c, $l) = $r; the oracle gives $(length(pos)) positions $(isempty(pos) ? "" : extrema(pos))"
+                end
             end
-            ok
+            ok, detail
         end
         guarded!(rep, F, "sibling ranges partition the parent's range") do
             ok = true
@@ -92,14 +127,14 @@ function check_system(sys; name::AbstractString=string(nameof(typeof(sys))), lev
     end
     guarded!(rep, F, "covering law on a bushy walk (node_extent ⊇ descendant geometry)") do
         bad = 0; m = nothing
-        for c in walk[sample_positions(length(walk), 12)]
+        for c in walk[sample_positions(rng, length(walk), 12)]
             e = GrI.node_extent(sys, c)
             for dl in 0:2
                 l = GrI.level(c) + dl
                 l > last(Ls) && continue
                 lg = GrI.levelgrid(sys, l)
                 m = best_manifold(lg)
-                for d in _descend(sys, c, l)[sample_positions(length(_descend(sys, c, l)), 16)]
+                for d in _descend(sys, c, l)[sample_positions(rng, length(_descend(sys, c, l)), 16)]
                     i = localindex(lg, d)
                     all(p -> extent_contains_point(m, e, p), _cellpts(lg, i)) || (bad += 1)
                 end
@@ -107,30 +142,64 @@ function check_system(sys; name::AbstractString=string(nameof(typeof(sys))), lev
         end
         bad == 0, "$bad descendant cells outside their ancestor's node_extent"
     end
+    # depth alone is not the law: from sampled roots, one random chain of
+    # children to the deepest level, every cell inside every ancestor's extent
+    guarded!(rep, F, "covering law on a chain to the deepest level (every ancestor's node_extent)") do
+        bad = 0; cells = 0
+        rc = collect(GrI.rootcells(sys))
+        for r in rc[sample_positions(rng, length(rc), 6)]
+            chain = [(r, GrI.node_extent(sys, r))]
+            c = r
+            while GrI.level(c) < last(Ls)
+                ch = collect(GrI.children(sys, c))
+                isempty(ch) && break
+                c = ch[rand(rng, 1:length(ch))]
+                push!(chain, (c, GrI.node_extent(sys, c)))
+                lg = GrI.levelgrid(sys, GrI.level(c))
+                m = best_manifold(lg)
+                pts = _cellpts(lg, localindex(lg, c))
+                cells += 1
+                for (_, e) in chain
+                    all(p -> extent_contains_point(m, e, p), pts) || (bad += 1; break)
+                end
+            end
+        end
+        metric!(rep, "covering chain cells", cells)
+        bad == 0, "$bad cells escape an ancestor's node_extent"
+    end
     check_system_performance!(rep, sys, walk)
     # the level grid itself, and a multi-level set
     gl = grid_level === nothing ? Ls[min(end, 3)] : grid_level
     lg = GrI.levelgrid(sys, gl)
-    sub = check_grid(lg; name="$(name) level $gl", nsamples=nsamples)
+    sub = check_grid(lg; name="$(name) level $gl", nsamples, rng)
     _merge!(rep, sub, "level $gl")
     if gl + 1 <= last(Ls)
         _merge!(rep, check_laziness(lg, GrI.levelgrid(sys, gl + 1); name="$(name) levels $gl / $(gl + 1)"), "laziness")
     end
     mls = _sample_multilevel(sys, gl)
     if mls !== nothing
-        _merge!(rep, check_multilevel(mls; name="$(name) multi-level set"), "multi-level")
+        _merge!(rep, check_multilevel(mls; name="$(name) multi-level set", rng), "multi-level")
     end
     quiet || print_report(rep)
     return rep
 end
 
 """
-    test_system(sys; kw...) -> ConformanceReport
+    test_system(sys; levels = 2:5, kw...) -> ConformanceReport
 
-[`check_system`](@ref), emitted as a `@testset` with one `@test` per law.
+[`check_system`](@ref), emitted as a `@testset` with one `@test` per law and a
+`@test_skip` per suite the system does not claim. `levels` are the level
+numbers the grid laws are run on (those the system has, up to three of them;
+the hierarchy laws always walk from the roots); the remaining keywords are
+[`check_system`](@ref)'s.
 """
-function test_system(sys; kw...)
-    rep = check_system(sys; kw...)
+function test_system(sys; levels=2:5, kw...)
+    ls = [l for l in levels if l in GrI.levels(sys)]
+    isempty(ls) && (ls = [GrI.levels(sys)[min(end, 3)]])
+    rep = check_system(sys; grid_level=first(ls), kw...)
+    for l in ls[2:min(end, 3)]
+        _merge!(rep, check_grid(GrI.levelgrid(sys, l); name="$(rep.name) level $l", nsamples=24, seed=something(rep.seed, DEFAULT_SEED)), "level $l")
+    end
     emit_tests(rep)
     return rep
 end
@@ -147,18 +216,18 @@ function _merge!(rep, sub, tag)
     end
 end
 
-function _bushy(sys, depth, nsamples)
+function _bushy(sys, depth, nsamples, rng)
     out = collect(GrI.rootcells(sys))
     # expand only a sample of each frontier: a system may have 10^4 roots with
     # 10^5 children each (CopernicusDEM), so the full walk is not affordable
-    frontier = out[sample_positions(length(out), nsamples)]
+    frontier = out[sample_positions(rng, length(out), nsamples)]
     for _ in 1:depth
         next = eltype(out)[]
         for c in frontier
             GrI.level(c) >= last(GrI.levels(sys)) && continue
             append!(next, GrI.children(sys, c))
         end
-        next = next[sample_positions(length(next), nsamples)]
+        next = next[sample_positions(rng, length(next), nsamples)]
         append!(out, next)
         frontier = next
     end
@@ -193,8 +262,9 @@ end
 The multi-level-set laws (antichain, tessellation trait = refinement trait,
 refused globalindex and dual, tree covers every member once) plus `check_grid`.
 """
-function check_multilevel(s; name::AbstractString="multi-level set", nsamples::Int=48)
-    rep = check_grid(s; name, nsamples)
+function check_multilevel(s; name::AbstractString="multi-level set", nsamples::Int=48,
+        seed::Integer=DEFAULT_SEED, rng::Union{Nothing,Random.AbstractRNG}=nothing)
+    rep = check_grid(s; name, nsamples, seed, rng)
     F = :multilevel
     sys = GrI.system(s)
     law!(rep, F, "no member is an ancestor of another", GrI.check_antichain(s))
@@ -220,6 +290,18 @@ function check_system_performance!(rep, sys, walk)
         types = unique(typeof(GrI.levelgrid(sys, l)) for l in GrI.levels(sys))
         ok = length(T) == 1 && isconcretetype(only(T)) && length(types) == 1
         ok, "return_types $(T); runtime types $(length(types))"
+    end
+    guarded!(rep, F, "hierarchy verbs infer to one concrete type (children, parent, rootcells, node_extent, descendant_range)") do
+        c = walk[min(end, 2)]
+        problems = String[]
+        checks = Any[("children(sys, c)", _infer_children, (typeof(sys), typeof(c))), ("parent(sys, c)", _infer_parent, (typeof(sys), typeof(c))),
+            ("rootcells(sys)", _infer_rootcells, (typeof(sys),)), ("node_extent(sys, c)", _infer_extent_sys, (typeof(sys), typeof(c)))]
+        GrI.has_sorted_subtrees(sys) && push!(checks, ("descendant_range(sys, c, l)", _infer_drange, (typeof(sys), typeof(c), Int)))
+        for (label, f, A) in checks
+            types = Base.return_types(f, Tuple{A...})
+            length(types) == 1 && _inferred_ok(only(types)) || push!(problems, "$label infers $types")
+        end
+        isempty(problems), join(problems, "; ")
     end
     c = walk[min(end, 2)]
     GrI.children(sys, c); GrI.rootcells(sys)
@@ -275,7 +357,8 @@ function check_laziness!(rep, small, large)
     # system without sorted subtrees (the selection cursor, a provider's index
     # tree); a grid with its own O(1) tree or the window-mode cursor is measured.
     sys = GrI.system(small)
-    if :treeify in fallback_verbs(small)
+    fb = fallback_verbs(small)
+    if :treeify in fb
         info!(rep, F, "laziness: treeify", "the R-tree fallback is O(ncells) to build: wrap once in GridAndTree; not measured")
     elseif sys !== nothing && !GrI.has_sorted_subtrees(sys)
         info!(rep, F, "laziness: treeify", "no sorted subtrees: a tree materialises the selection, O(ncells); not measured")
@@ -286,7 +369,7 @@ function check_laziness!(rep, small, large)
             "grid_extent" => g -> GrI.grid_extent(g),
             "subtree" => g -> _treekey(subtree(g, [1, ncells(g)])))
     end
-    if GrI.uses_neighbor_fallback(small)
+    if :neighbors in fb
         info!(rep, F, "laziness: neighbors", "geometric fallback builds a tree per call; not measured")
     else
         push!(verbs, "neighbors" => g -> collect(neighbors(g, _mid(g))))
@@ -310,3 +393,9 @@ function check_laziness!(rep, small, large)
         end
     end
 end
+
+_infer_children(s, c) = GrI.children(s, c)
+_infer_parent(s, c) = Base.parent(s, c)
+_infer_rootcells(s) = GrI.rootcells(s)
+_infer_extent_sys(s, c) = GrI.node_extent(s, c)
+_infer_drange(s, c, l) = GrI.descendant_range(s, c, l)

@@ -84,6 +84,7 @@ GrI.cellshape(g::G) = dgg_cellshape(DGG.system(g))
 # H3 is convex only at even (class II) levels: class III cells cross icosahedron
 # edges and bend there. So the shape is per level here, not per system.
 GrI.cellshape(g::HLG{DGG.H3System}) = iseven(g.level) ? GrI.ConvexCells() : GrI.SimpleCells()
+GrI.cellshape(::GrI.MultiLevelSet{DGG.H3System}) = GrI.SimpleCells()    # may hold odd levels
 GrI.edgekind(g::G) = dgg_edgekind(DGG.system(g))
 GrI.extent_is_expensive(g::G) = !(FB.cell_cap_is_cheap(g) isa Val{true})
 # DGG builds a polygon per call (densified chart edges, H3/IGeo7 projections):
@@ -131,8 +132,11 @@ GrI.neighbors(g::G, i::Integer; connectivity::GrI.Connectivity=GrI.Vertex()) =
     DGG.neighbors(g, Int(i), 1; connectivity=_dconn(connectivity))
 GrI.neighbors(g::G, i::Integer, k::Integer; connectivity::GrI.Connectivity=GrI.Vertex()) =
     DGG.neighbors(g, Int(i), k; connectivity=_dconn(connectivity))
-GrI.ring(g::G, i::Integer, k::Integer; connectivity::GrI.Connectivity=GrI.Vertex()) =
-    DGG.ring(g, Int(i), k; connectivity=_dconn(connectivity))
+# DGG's integer-position ring does not infer on IGeo7 and S2 (its typed form does)
+function GrI.ring(g::G, i::Integer, k::Integer; connectivity::GrI.Connectivity=GrI.Vertex())
+    r = DGG.ring(g, Int(i), k; connectivity=_dconn(connectivity))
+    return (r isa Vector{Int} ? r : collect(Int, r))::Vector{Int}
+end
 GrI.maxneighbors(g::G, c::GrI.Connectivity) = DGG.maxneighbors(g, _dconn(c))
 GrI.maxring(g::G, k::Integer, c::GrI.Connectivity=GrI.Vertex()) =
     k == 0 ? 1 : k == 1 ? DGG.maxneighbors(g, _dconn(c)) : DGG.maxring(g, k, _dconn(c))

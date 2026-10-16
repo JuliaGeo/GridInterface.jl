@@ -1,5 +1,30 @@
-# --- sampling ----------------------------------------------------------------
-sample_positions(n, k) = n <= k ? collect(1:n) : unique(round.(Int, range(1, n; length=k)))
+# --- seeded sampling -------------------------------------------------------------
+"""
+    DEFAULT_SEED
+
+The seed every `check_*` / `test_*` call samples with unless given an `rng`.
+The report header prints the seed a run used, so a failure is reproduced by
+running the same call again; passing `rng = MersenneTwister(s)` explores a
+different sample (an RNG advances as it is drawn from, so reproducing a run
+means a fresh generator on the same seed, not the one it consumed).
+"""
+const DEFAULT_SEED = 20260813
+_default_rng(seed::Integer=DEFAULT_SEED) = Random.MersenneTwister(seed)
+
+"""
+    sample_positions(rng, n, k) -> Vector{Int}
+
+Up to `k` distinct positions of `1:n`, sorted, always holding `1` and `n` (the
+first and last cells are where edge and pole arithmetic breaks); every
+position when `n <= k`. Drawn with replacement and deduplicated, so a level
+grid with more cells than fit in memory never allocates a permutation.
+"""
+function sample_positions(rng::Random.AbstractRNG, n::Integer, k::Integer)
+    n <= 0 && return Int[]
+    n <= k && return collect(1:Int(n))
+    k <= 2 && return [1, Int(n)]
+    return sort!(unique!(vcat([1, Int(n)], rand(rng, 1:Int(n), Int(k) - 2))))
+end
 
 # --- points on either manifold ------------------------------------------------
 _v(p) = (Float64(GI.x(p)), Float64(GI.y(p)), Float64(GI.z(p)))
@@ -139,45 +164,130 @@ function is_ccw_sequence(az)
 end
 
 # --- fallback detection ------------------------------------------------------------
-# A verb is "answered by the generic" when the method selected for this grid type
-# has `Any` as its first argument type.
-function _is_generic(f, argtypes::Tuple)
+"""
+    has_nonfallback_method(f, args...) -> Bool
+
+Whether dispatch for `f(args...)` reaches a method written for the grid or
+system among `args` rather than an interface-wide generic. "A fallback
+answering in place of a declared analytic trait" is a conformance failure, and
+this is how the suite tells the two apart.
+
+# Method selection
+
+The subjects are the arguments that claim the contract (`isgrid` or
+`issystem`). The matched method counts as specialized when its parameter at a
+subject's position is **strictly narrower** than the interface-wide subject
+type: GridInterface's generics take the grid as `Any`, so anything a provider
+wrote (its own type, a family supertype such as `AbstractStructuredGrid` or
+DGG's `AbstractGrid`) is narrower. Module ownership is irrelevant: a module may
+define both generic fallbacks and specialized methods.
+
+A transparent wrapper ([`GridInterface.AbstractWrappedGrid`](@ref)) forwards
+every verb it does not hold to its parent, so a method whose subject parameter
+is the wrapper supertype is a forward, not an answer: the question is asked of
+the parent instead. A wrapper's own override (`cellat` on a `GridAndTree`) is
+narrower than the supertype and counts as specialized.
+
+This function reports only whether a specialized method exists; the laws
+separately validate its result.
+"""
+function has_nonfallback_method(f, args...)
+    applicable(f, args...) || return false
     m = try
-        which(f, Tuple{argtypes...})
-    catch
-        return true
+        which(f, Base.typesof(args...))
+    catch err
+        # Ambiguous dispatch does not identify a specialized implementation.
+        (err isa ArgumentError || err isa MethodError) || rethrow()
+        return false
     end
-    sig = Base.unwrap_unionall(m.sig)
-    return sig.parameters[2] === Any
+    positions = _subject_positions(args)
+    isempty(positions) && return false
+    has_specific_subject(m, positions) && return true
+    for k in positions
+        a = args[k]
+        a isa GrI.AbstractWrappedGrid && return has_nonfallback_method(f, Base.setindex(args, parent(a), k)...)
+    end
+    return false
 end
+
+_subject_positions(args) = [k for k in eachindex(args) if GrI.isgrid(args[k]) || GrI.issystem(args[k])]
+
+"""
+    has_specific_subject(m::Method, positions) -> Bool
+
+Whether `m` takes, at one of the argument `positions` (1-based, after the
+function), a type **strictly narrower** than the interface-wide subject types
+(`Any`, and `AbstractWrappedGrid` for the forwards): the specificity test behind
+[`has_nonfallback_method`](@ref).
+
+Each parameter of the signature is rewrapped in the method's own `where`
+clauses before the comparison, so a parametric subject type (`Subset{G,V,R}`,
+`GridAndTree{G,T}`) is compared as the closed type `Subset{G,V,R} where {G,V,R}`
+rather than as an open body whose free type variables make subtyping
+undecidable.
+
+"Strictly narrower" is spelled `!(base <: T)` rather than `T !== base` on
+purpose: a method written `f(g::G) where {G}` has a parameter that is *equal*
+to `Any` without being `===` to it, and that method is the interface-wide
+generic, not an implementation.
+"""
+function has_specific_subject(m::Method, positions)
+    sig = m.sig
+    body = Base.unwrap_unionall(sig)
+    body isa DataType || return false
+    params = body.parameters
+    # Parameter 1 is `typeof(f)`; subject k is parameter k + 1.
+    for k in positions
+        k + 1 <= length(params) || continue
+        T = Base.rewrap_unionall(params[k+1], sig)
+        T isa Type || continue
+        _specific_subject(T) && return true
+    end
+    return false
+end
+_specific_subject(T) = !(Any <: T) && !(GrI.AbstractWrappedGrid <: T)
 
 """
     fallback_verbs(grid) -> Vector{Symbol}
 
-The verbs that resolve to GridInterface's generic method for this grid type.
+The verbs that resolve to GridInterface's generic method for this grid
+(through any transparent wrappers), by [`has_nonfallback_method`](@ref).
 """
 function fallback_verbs(grid)
-    G = typeof(grid)
     out = Symbol[]
-    for (f, args) in ((GrI.cell_centroid, (G, Int)), (GrI.cell_area, (G, Int)),
-                      (GrI.cell_extent, (G, Int)), (GrI.cell_geometry, (G, Int)),
-                      (GrI.cellat, (G, Any)), (GrI.treeify, (G, Int)),
-                      (GrI.cell_contains, (G, Int, Any)), (GrI.nvertices, (G,)),
-                      (GrI.cell_vertices, (G, Int)), (GrI.vertex_cells, (G, Int)))
-        _is_generic(f, args) && push!(out, nameof(f))
+    n = ncells(grid)
+    n > 0 || return out
+    # a grid whose centroid throws (a failed type contract) lists the point
+    # verbs as fallbacks rather than aborting the report
+    p = try cell_centroid(grid, 1) catch err; err isa InterruptException && rethrow(); nothing end
+    for (f, args) in ((GrI.cell_centroid, (1,)), (GrI.cell_area, (1,)), (GrI.cell_extent, (1,)),
+                      (GrI.cell_geometry, (1,)), (GrI.cellat, (p,)), (GrI.treeify, (3,)),
+                      (GrI.cell_contains, (1, p)), (GrI.nvertices, ()),
+                      (GrI.cell_vertices, (1,)), (GrI.vertex_cells, (1,)))
+        has_nonfallback_method(f, grid, args...) || push!(out, nameof(f))
     end
     # analytic vertices: the generic dense verbs derive from the provider's keys
     GrI.vertices_are_analytic(grid) && filter!(f -> !(f in (:nvertices, :cell_vertices, :vertex_cells)), out)
     # On a grid whose ids are its positions the generic identity is the intended
     # answer, not a fallback: list cellindex/localindex only for typed ids.
-    c1 = ncells(grid) > 0 ? cellindex(grid, 1) : 1
+    c1 = cellindex(grid, 1)
     if !(c1 isa Integer)
-        _is_generic(GrI.cellindex, (G, Int)) && push!(out, :cellindex)
-        _is_generic(GrI.localindex, (G, typeof(c1))) && push!(out, :localindex)
+        has_nonfallback_method(GrI.cellindex, grid, 1) || push!(out, :cellindex)
+        has_nonfallback_method(GrI.localindex, grid, c1) || push!(out, :localindex)
     end
     # keyword-argument functions: check the underlying positional method
-    _is_generic(GrI.neighbors, (G, Int)) && push!(out, :neighbors)
+    has_nonfallback_method(GrI.neighbors, grid, 1) || push!(out, :neighbors)
     return out
+end
+
+# A hand-written pass-through (not an AbstractWrappedGrid) over a grid with the
+# same positions: `parent` is a grid of the same size. Subsets, duals and
+# multi-level sets remap positions and are not wrappers.
+function handwritten_wrapper_parent(grid)
+    (grid isa GrI.AbstractWrappedGrid || grid isa GrI.Subset || grid isa GrI.DualGrid || grid isa GrI.MultiLevelSet) && return nothing
+    hasmethod(Base.parent, Tuple{typeof(grid)}) || return nothing
+    p = parent(grid)
+    return GrI.isgrid(p) && ncells(p) == ncells(grid) ? p : nothing
 end
 
 # geometric containing set of point p: all cells whose interior test accepts p
@@ -197,6 +307,40 @@ function collect_leaves(tree)
     STI.depth_first_search(_ -> true, tree) do i
         push!(out, i)
         nothing
+    end
+    return out
+end
+
+# the leaf indices under `node`, in traversal order (STI's default `subtree_indices`)
+function leaf_walk(node)
+    out = Int[]
+    STI.depth_first_search(_ -> true, node) do i
+        push!(out, i)
+        nothing
+    end
+    return out
+end
+
+# the first leaf of a tree (descending first children), or nothing
+function first_leaf(node)
+    STI.isleaf(node) && return node
+    for c in STI.getchild(node)
+        return first_leaf(c)
+    end
+    return nothing
+end
+
+# the root plus the nodes on `k` random descents (a few internal nodes and leaves)
+function sample_nodes(rng, tree, k)
+    out = Any[tree]
+    for _ in 1:k
+        node = tree
+        while !STI.isleaf(node)
+            cs = collect(STI.getchild(node))
+            isempty(cs) && break
+            node = cs[rand(rng, 1:length(cs))]
+            push!(out, node)
+        end
     end
     return out
 end

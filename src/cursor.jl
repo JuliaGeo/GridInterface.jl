@@ -338,7 +338,17 @@ end
 STI.isspatialtree(::Type{<:SelectionCursor}) = true
 STI.node_extent_is_expensive(::Type{<:SelectionCursor}) = true
 split_weight(n::SelectionCursor) = length(n.sel)
-subtree_indices(n::SelectionCursor) = fr_emitted(n.fr, n.sel)
+# the selection order is the members' order, not the walk's: collect leaves in
+# traversal order (STI's contract), still without touching extents
+subtree_indices(n::SelectionCursor) = _sel_indices!(Int[], n)
+function _sel_indices!(out, n::SelectionCursor)
+    if STI.isleaf(n)
+        for k in n.sel; push!(out, fr_emit(n.fr, k)); end
+    else
+        for c in _sel_children(n); _sel_indices!(out, c); end
+    end
+    return out
+end
 
 function STI.isleaf(n::SelectionCursor)
     k = length(n.sel)

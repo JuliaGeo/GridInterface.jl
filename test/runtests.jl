@@ -422,9 +422,7 @@ end
     for (name, g) in (("TinyPlanar", TinyPlanar(4, 3)), ("TinyCubeSphere", TinyCubeSphere(3)),
                       ("MinLonLat (four methods)", MinLonLat(12, 6)),
                       ("Subset of TinyPlanar", subset(TinyPlanar(4, 3), [1, 2, 5, 6, 7])))
-        rep = check_grid(g; name)
-        @test !any(r -> r.status === :fail, rep.results)
-        any(r -> r.status === :fail, rep.results) && print_report(rep)
+        test_grid(g; name)
     end
     # The polygon bag stores `Vector{Any}`: the conformance suite must catch the
     # type instability (performance family) and nothing else.
@@ -438,16 +436,12 @@ end
     rep = check_grid(dual(TinyCubeSphere(2)); name="dual of TinyCubeSphere")
     fails = [r.law for r in rep.results if r.status === :fail]
     @test isempty(fails)
-    rep = check_system(QuadSystem(5); name="QuadSystem")
-    @test !any(r -> r.status === :fail, rep.results)
-    any(r -> r.status === :fail, rep.results) && print_report(rep)
+    rep = test_system(QuadSystem(5); name="QuadSystem")
     @test any(r -> r.family === :performance && occursin("laziness: cellat", r.law) && r.status === :pass, rep.results)
     rep = check_laziness(TinyPlanar(4, 3), TinyPlanar(16, 12))
     @test !any(r -> r.status === :fail, rep.results)
     any(r -> r.status === :fail, rep.results) && print_report(rep)
-    rep = check_grid(GridAndTree(TinyCubeSphere(2)); name="GridAndTree of TinyCubeSphere")
-    @test !any(r -> r.status === :fail, rep.results)
-    any(r -> r.status === :fail, rep.results) && print_report(rep)
+    test_grid(GridAndTree(TinyCubeSphere(2)); name="GridAndTree of TinyCubeSphere")
 end
 
 include("structured.jl")

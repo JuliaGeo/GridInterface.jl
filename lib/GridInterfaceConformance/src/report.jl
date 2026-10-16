@@ -10,16 +10,25 @@ end
 
 The result of [`check_grid`](@ref) or [`check_system`](@ref): `name`, one
 `LawResult` per law in `results` (family, law, `:pass`/`:fail`/`:skip`/`:info`,
-detail), the verbs answered by generic fallbacks in `fallbacks`, and measured
-`metrics`. Summarise with [`family_status`](@ref) and [`print_report`](@ref).
+detail), the verbs answered by generic fallbacks in `fallbacks`, measured
+`metrics`, and the sampling `seed` (printed in the header so a failure
+reproduces). Summarise with [`family_status`](@ref) and [`print_report`](@ref).
 """
 struct ConformanceReport
     name::String
     results::Vector{LawResult}
     fallbacks::Vector{Symbol}
     metrics::Dict{String,Any}
+    seed::Union{Nothing,Int}      # the sampling seed, or nothing when the caller supplied an rng
 end
-ConformanceReport(name) = ConformanceReport(name, LawResult[], Symbol[], Dict{String,Any}())
+ConformanceReport(name; seed=nothing) = ConformanceReport(name, LawResult[], Symbol[], Dict{String,Any}(), seed)
+
+# The rng a check samples with: the caller's, or a fresh generator on `seed`
+# (recorded in the report so the run reproduces).
+function sampling_rng(seed, rng)
+    rng === nothing && return _default_rng(seed), Int(seed)
+    return rng, nothing
+end
 
 const FAMILIES = (:identity, :tree, :geometry, :location, :neighbors, :dual, :subsets,
     :hierarchy, :multilevel, :performance)
@@ -73,7 +82,7 @@ Print the family status line, every failed, skipped and informational law
 (every law when `verbose`), the fallbacks answering, and the metrics.
 """
 function print_report(io::IO, rep::ConformanceReport; verbose=false)
-    println(io, "== ", rep.name, " ==")
+    println(io, "== ", rep.name, " ==", rep.seed === nothing ? "" : "  (seed $(rep.seed))")
     st = family_status(rep)
     println(io, "  ", join(("$f=$(st[f])" for f in FAMILIES if haskey(st, f)), "  "))
     for r in rep.results
@@ -87,8 +96,12 @@ function print_report(io::IO, rep::ConformanceReport; verbose=false)
 end
 print_report(rep::ConformanceReport; kw...) = print_report(stdout, rep; kw...)
 
-# Emit the report as Test results (used by test_grid / test_system).
+# Emit the report as Test results (used by test_grid / test_system): one @test
+# per law, a @test_skip per suite the grid does not claim, and, since `Test`
+# never displays a skip's reason and a summary cannot tell a skip from a known
+# failure, one @info naming every skip at the end (DGG's reporting).
 function emit_tests(rep::ConformanceReport)
+    skips = String[]
     @testset "$(rep.name)" begin
         for fam in FAMILIES
             rs = filter(r -> r.family === fam, rep.results)
@@ -101,10 +114,15 @@ function emit_tests(rep::ConformanceReport)
                         @test r.status !== :fail
                         @info "law failed" family = fam law = r.law detail = r.detail
                     elseif r.status === :skip
-                        @test_skip r.law
+                        reason = "$fam: $(r.detail)"
+                        push!(skips, reason)
+                        @test_skip reason
                     end
                 end
             end
         end
+        isempty(skips) || @info "conformance: $(length(skips)) suite(s) skipped for $(rep.name)\n" *
+            join(("  " * s for s in skips), "\n")
     end
+    return nothing
 end

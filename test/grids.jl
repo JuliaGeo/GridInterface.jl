@@ -317,7 +317,6 @@ function GrI.vertex_cells(g::KeyedPlanar, key::GrI.VertexKey)
     quads = ((vx, vy), (vx - 1, vy), (vx - 1, vy - 1), (vx, vy - 1))      # CCW: NE, NW, SW, SE
     inside(q) = 0 <= q[1] < g.nx && 0 <= q[2] < g.ny
     # an open fan starts just after the gap
-    start = findfirst(j -> inside(quads[j]) && !inside(quads[mod1(j - 1, 4)]), 1:4)
-    start === nothing && (start = 1)
+    start = something(findfirst(j -> inside(quads[j]) && !inside(quads[mod1(j - 1, 4)]), 1:4), 1)
     return [q[1] + g.nx * q[2] + 1 for q in (quads[mod1(start + j, 4)] for j in 0:3) if inside(q)]
 end

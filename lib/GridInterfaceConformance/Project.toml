@@ -2,6 +2,9 @@ name = "GridInterfaceConformance"
 uuid = "aa8aab9d-9df5-42a8-9a40-2377a5cb432e"
 version = "0.0.1"
 
+[workspace]
+projects = ["test"]
+
 [deps]
 Extents = "411431e0-e8b7-467b-b5e0-f676ba4f2910"
 GeoInterface = "cf35fbd7-0cd7-5166-be24-54bfbe79505f"

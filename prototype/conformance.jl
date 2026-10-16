@@ -42,3 +42,8 @@ for (name, sys, ls) in (("HEALPix", DGG.HEALPixSystem(), (4, 12)), ("CopernicusD
     t = @elapsed rep = check_laziness(small, large; name="$name laziness L$(ls[1]) / L$(ls[2])")
     report(rep, t)
 end
+# The full grid laws on a 6.9e10-cell grid: every law must sample, never enumerate (about 12 s cold)
+let g = GrI.levelgrid(DGG.CopernicusDEMSystem(90), 1)
+    t = @elapsed rep = check_grid(g; name="CopernicusDEM(90) L1 (6.9e10 cells, sampled laws)")
+    report(rep, t)
+end

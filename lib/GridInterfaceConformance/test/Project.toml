@@ -1,0 +1,17 @@
+[deps]
+Extents = "411431e0-e8b7-467b-b5e0-f676ba4f2910"
+GeoInterface = "cf35fbd7-0cd7-5166-be24-54bfbe79505f"
+GeometryOps = "3251bfac-6a57-4b6d-aa61-ac1fef2975ab"
+GeometryOpsCore = "05efe853-fabf-41c8-927e-7063c8b9f013"
+GridInterface = "7bba8399-ed35-4924-b5cf-83e2b32b3972"
+GridInterfaceConformance = "aa8aab9d-9df5-42a8-9a40-2377a5cb432e"
+SpatialTreeInterface = "bf42099b-6274-40f2-a94d-272408263a4f"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+UnitSphericalGeometryCore = "374d2b58-edf9-4f97-868a-42ae1c074d0a"
+
+[sources]
+GeometryOps = {path = "/home/anshul/.julia/dev/geo/GeometryOps-split"}
+GridInterface = {path = "../../.."}
+GridInterfaceConformance = {path = ".."}
+SpatialTreeInterface = {path = "/home/anshul/.julia/dev/geo/GeometryOps-split/SpatialTreeInterface"}
+UnitSphericalGeometryCore = {path = "/home/anshul/.julia/dev/geo/GeometryOps-split/UnitSphericalGeometryCore"}

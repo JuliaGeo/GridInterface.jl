@@ -28,9 +28,7 @@ _sameptr(a, b) = all(abs.(a .- b) .< 1e-9)
 
     # conformance: both grids pass every family they claim
     for (name, g) in (("RegularGrid 20x10 (Planar)", rg), ("CellBasedGrid lon/lat 36x18 (Spherical)", cb))
-        rep = check_grid(g; name)
-        @test !any(r -> r.status === :fail, rep.results)
-        any(r -> r.status === :fail, rep.results) && print_report(rep)
+        rep = test_grid(g; name)
         @test any(r -> r.family === :neighbors && occursin("alignment", r.law) && r.status === :pass, rep.results)
         @test any(r -> r.family === :dual && occursin("keys round-trip", r.law) && r.status === :pass, rep.results)
     end

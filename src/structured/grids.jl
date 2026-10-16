@@ -192,7 +192,13 @@ GrI.cellat(g::ExplicitPolygonGrid, p) = GrI.fallback_cellat(g.manifold, g, check
 # CR's extents for a block of stored polygons: the union of their boxes on
 # the plane; on the sphere the cap about the mean of every polygon vertex.
 function _blockextent(::Planar, g::ExplicitPolygonGrid, f, ir::UnitRange{Int}, jr::UnitRange{Int})
-    return mapreduce(GI.extent, Extents.union, (g.polygons[i, j] for i in ir, j in jr))
+    xmin = ymin = Inf; xmax = ymax = -Inf
+    for j in jr, i in ir, pt in GI.getpoint(GI.getexterior(g.polygons[i, j]))
+        x, y = Float64(GI.x(pt)), Float64(GI.y(pt))
+        xmin = min(xmin, x); xmax = max(xmax, x)
+        ymin = min(ymin, y); ymax = max(ymax, y)
+    end
+    return Extents.Extent(X=(xmin, xmax), Y=(ymin, ymax))
 end
 function _blockextent(::Spherical, g::ExplicitPolygonGrid, f, ir::UnitRange{Int}, jr::UnitRange{Int})
     all_points = UnitSphericalPoint{Float64}[]

@@ -1,17 +1,21 @@
 struct NotAScheme end   # an id scheme no grid declares
 
 """
-    check_grid(grid; name, nsamples = 64, full_tree_limit = 200_000) -> ConformanceReport
+    check_grid(grid; name, nsamples = 64, seed = DEFAULT_SEED, rng = nothing,
+               full_tree_limit = 200_000) -> ConformanceReport
 
-Run every family's laws that `grid` claims. Never throws.
+Run every family's laws that `grid` claims. Never throws. Samples `nsamples`
+positions with a fresh generator on `seed` (printed in the report header), or
+with `rng` when given.
 """
 function check_grid(grid; name::AbstractString=string(nameof(typeof(grid))), nsamples::Int=64,
         full_tree_limit::Int=200_000, area_rtol::Real=1e-3, total_area_limit::Int=2_000_000,
-        quiet::Bool=true)
-    rep = ConformanceReport(String(name))
+        seed::Integer=DEFAULT_SEED, rng::Union{Nothing,Random.AbstractRNG}=nothing, quiet::Bool=true)
+    rng, seed = sampling_rng(seed, rng)
+    rep = ConformanceReport(String(name); seed)
     n = ncells(grid)
     m = best_manifold(grid)
-    S = sample_positions(n, nsamples)
+    S = sample_positions(rng, n, nsamples)
     append!(rep.fallbacks, fallback_verbs(grid))
     metric!(rep, "ncells", n)
     metric!(rep, "manifold", string(nameof(typeof(m))))
@@ -24,24 +28,27 @@ function check_grid(grid; name::AbstractString=string(nameof(typeof(grid))), nsa
         quiet || print_report(rep)
         return rep
     end
-    tree = check_tree!(rep, grid, n, m, S, full_tree_limit)
+    tree = check_tree!(rep, grid, n, m, S, rng, full_tree_limit)
     check_geometry!(rep, grid, m, S, area_rtol, total_area_limit)
+    check_structured!(rep, grid, S, rng)
     check_location!(rep, grid, m, S, tree)
     check_neighbors!(rep, grid, m, S)
-    check_dual!(rep, grid, m, S)
-    check_subsets!(rep, grid, m, S)
+    check_dual!(rep, grid, m, S, rng)
+    check_subsets!(rep, grid, m, S, rng)
     check_grid_performance!(rep, grid, S)
     quiet || print_report(rep)
     return rep
 end
 
 """
-    test_grid(grid; kw...) -> ConformanceReport
+    test_grid(grid; nsamples = 64, kw...) -> ConformanceReport
 
-`check_grid`, emitted as a `@testset` with one `@test` per law.
+[`check_grid`](@ref), emitted as a `@testset` with one `@test` per law and a
+`@test_skip` per suite the grid does not claim (every skip is also named in
+one `@info` at the end, so a CI log shows what was not checked).
 """
-function test_grid(grid; kw...)
-    rep = check_grid(grid; kw...)
+function test_grid(grid; nsamples::Int=64, kw...)
+    rep = check_grid(grid; nsamples, kw...)
     emit_tests(rep)
     return rep
 end
@@ -145,7 +152,7 @@ function check_spherical_types!(rep, grid, S)
 end
 
 # ------------------------------------------------------------------ tree
-function check_tree!(rep, grid, n, m, S, full_tree_limit)
+function check_tree!(rep, grid, n, m, S, rng, full_tree_limit)
     F = :tree
     tree = try
         treeify(grid)
@@ -183,14 +190,41 @@ function check_tree!(rep, grid, n, m, S, full_tree_limit)
         ls = sort!(collect_leaves(subtree(grid, cells)))
         ls == cells, "expected $(length(cells)) got $(length(ls))"
     end
-    # the intents: every hint and an integer yield a tree over 1:ncells
-    for hint in (GrI.Balanced(), GrI.ForSweeps(), GrI.ForQueries(), 3)
-        guarded!(rep, F, "treeify(grid; leaf_capacity = $hint) is a tree over 1:ncells") do
-            t = treeify(grid; leaf_capacity=hint)
-            ok = STI.isspatialtree(t)
-            n <= full_tree_limit && (ok &= sort!(collect_leaves(t)) == 1:n)
-            ok, string(typeof(t))
+    if n <= full_tree_limit
+        guarded!(rep, F, "subtree_indices(node) is the leaf walk, for the root and sampled nodes") do
+            nodes = sample_nodes(rng, tree, 6)
+            bad = count(nd -> collect(GrI.subtree_indices(nd)) != leaf_walk(nd), nodes)
+            bad == 0, "$bad of $(length(nodes)) nodes"
         end
+    end
+    # a leaf's entries are read, not rebuilt: re-reading costs no more than the
+    # first read, and a read is O(entries) (an extent per entry, which may be a
+    # computed cap), never O(ncells)
+    leaf = first_leaf(tree)
+    leaf === nothing || guarded!(rep, F, "a leaf's child_indices_extents re-reads at the same cost (O(1) re-read, no rebuild)") do
+        _read_leaf(leaf)
+        b1 = @allocated _read_leaf(leaf)
+        b2 = @allocated _read_leaf(leaf)
+        k = length(STI.child_indices_extents(leaf))
+        metric!(rep, "leaf re-read bytes", "$b1 / $b2 over $k entries")
+        b2 <= b1 && (b1 <= 8192 * (k + 1) || b1 <= 64n), "first read $b1 B, second $b2 B, $k entries"
+    end
+    # the intents: every hint yields the tree of its integer capacity, over 1:ncells
+    for hint in (GrI.Balanced(), GrI.ForSweeps(), GrI.ForQueries())
+        cap = GrI.leaf_capacity(grid, hint)
+        guarded!(rep, F, "treeify(grid; leaf_capacity = $hint) is the tree of leaf_capacity = $cap, over 1:ncells") do
+            t = treeify(grid; leaf_capacity=hint)
+            ti = treeify(grid, cap)
+            ok = STI.isspatialtree(t) && _treekey(t) == _treekey(ti) && _max_leaf(t, 2000) == _max_leaf(ti, 2000)
+            n <= full_tree_limit && (ok &= sort!(collect_leaves(t)) == 1:n)
+            ok, "$(typeof(t)): largest leaf $(_max_leaf(t, 2000)) vs $(_max_leaf(ti, 2000)) for the integer"
+        end
+    end
+    guarded!(rep, F, "treeify(grid, 3) is a tree over 1:ncells") do
+        t = treeify(grid, 3)
+        ok = STI.isspatialtree(t)
+        n <= full_tree_limit && (ok &= sort!(collect_leaves(t)) == 1:n)
+        ok, string(typeof(t))
     end
     # GridInterface's own trees honour the capacity; a provider with one tree
     # shape may ignore it (reported, not failed)
@@ -226,17 +260,47 @@ function check_tree!(rep, grid, n, m, S, full_tree_limit)
     end
     guarded!(rep, F, "split_weight and subtree_indices survive GridAndTree") do
         g = GrI.GridAndTree(grid, tree)
-        GrI.split_weight(g) == GrI.split_weight(tree) && collect(GrI.subtree_indices(g)) == collect(GrI.subtree_indices(tree))
+        # the root's indices are every cell: compared only where a full walk is
+        GrI.split_weight(g) == GrI.split_weight(tree) &&
+            (n > full_tree_limit || collect(GrI.subtree_indices(g)) == collect(GrI.subtree_indices(tree)))
     end
     guarded!(rep, F, "mockchunks answers the given chunks and chunkat agrees") do
         ch = GrI.chunks(grid)
         cells = S[1:2:end]
-        mine = [GrI.subset(grid, cells), GrI.subset(grid, setdiff(1:n, cells))]
+        rest = n <= full_tree_limit ? setdiff(1:n, cells) : setdiff(S, cells)   # S holds n
+        mine = [GrI.subset(grid, cells), GrI.subset(grid, rest)]
         w = GrI.mockchunks(grid, mine)
         GrI.chunks(w) === mine && GrI.chunkat(w, cells[1]) == 1 && GrI.chunkat(w, n) == (n in cells ? 1 : 2) &&
             (ch === nothing ? GrI.chunks(GrI.mockchunks(grid, nothing)) === nothing : true)
     end
+    # the grid under test is itself a wrapper: a verb its parent answers with a
+    # provided method is not demoted to a fallback by the wrapper (an
+    # AbstractWrappedGrid forwards by construction; a hand-written pass-through
+    # can forget one)
+    P = grid isa GrI.AbstractWrappedGrid ? parent(grid) : handwritten_wrapper_parent(grid)
+    P === nothing || guarded!(rep, F, "a wrapper does not demote a verb its parent provides to a fallback") do
+        bad = String[]; k = 0
+        for (f, Ts) in GrI.WRAPPED_VERBS
+            args = _wrapper_args(grid, S, f, Ts, nbr_ok)
+            args === nothing && continue
+            k += 1
+            fn = getfield(GrI, f)
+            has_nonfallback_method(fn, P, args...) && !has_nonfallback_method(fn, grid, args...) && push!(bad, "$f$Ts")
+        end
+        metric!(rep, "wrapper verbs exercised", "$k / $(length(GrI.WRAPPED_VERBS))")
+        isempty(bad), "demoted: " * join(first(bad, 6), ", ")
+    end
     return tree
+end
+
+# iterate a leaf's entries (what a sweep does), returning something so the
+# read is not optimised away
+function _read_leaf(leaf)
+    s = 0
+    for (i, _) in STI.child_indices_extents(leaf)
+        s += i
+    end
+    return s
 end
 
 function _walk_extents!(grid, m, node, nested_bad, geom_bad, visited, budget)
@@ -323,6 +387,9 @@ function _wrapper_key(f, x)
     f === :chunks && return x === nothing ? nothing : length(x)
     STI.isspatialtree(x) && return (typeof(x), GrI.split_weight(x))
     f === :cell_geometry && return collect(GI.getpoint(x))
+    # a whole-grid answer (`interior()` is `OneTo(ncells)`) is not collected
+    x isa AbstractRange && return x
+    x isa AbstractVector && length(x) > 1_000_000 && return (typeof(x), length(x), first(x), last(x))
     x isa AbstractVector && return collect(x)
     return x
 end
@@ -439,12 +506,66 @@ function _check_total_area!(rep, grid, m, n, limit)
     end
 end
 
+# ------------------------------------------------------------------ structured
+# The face hooks of a member of the structured family: positions are a
+# bijection with (face, i, j), and a face with axes charts its own vertices.
+# The seams (neighbours and fans across faces) are checked with the neighbour
+# family against a shared-vertex oracle.
+function check_structured!(rep, grid, S, rng)
+    Structured.isstructured(grid) || return
+    nf = Structured.nfaces(grid)
+    guarded!(rep, :identity, "structured: faceposition ∘ facecell is the identity on sampled positions; the faces tile 1:ncells") do
+        bad = [k for k in S if Structured.faceposition(grid, Structured.facecell(grid, k)...) != k]
+        total = sum(f -> prod(Structured.facesize(grid, f)), 1:nf)
+        isempty(bad) && total == ncells(grid), "positions $(first(bad, 5)); faces hold $total cells"
+    end
+    guarded!(rep, :identity, "structured: facecell ∘ faceposition is the identity on every face's corners and a sampled cell") do
+        bad = Tuple{Int,Int,Int}[]
+        for f in 1:nf
+            ni, nj = Structured.facesize(grid, f)
+            for (i, j) in ((1, 1), (ni, 1), (ni, nj), (1, nj), (rand(rng, 1:ni), rand(rng, 1:nj)))
+                Structured.facecell(grid, Structured.faceposition(grid, f, i, j)) == (f, i, j) || push!(bad, (f, i, j))
+            end
+        end
+        isempty(bad), "cells $(first(bad, 5))"
+    end
+    axed = [f for f in 1:nf if Structured.hasfaceaxes(grid, f)]
+    if isempty(axed)
+        info!(rep, :geometry, "structured: faceaxes", "no face declares axes")
+    else
+        guarded!(rep, :geometry, "structured: faceaxes agree with facevertex through facecoords (hasfaceaxes faces)") do
+            bad = 0; checked = 0
+            for f in axed
+                xs, ys = Structured.faceaxes(grid, f)
+                ni, nj = Structured.facesize(grid, f)
+                (length(xs) == ni + 1 && length(ys) == nj + 1 && issorted(xs) && issorted(ys)) || (bad += 1; continue)
+                period = Structured.faceperiod(grid, f)
+                verts = [(1, 1), (ni + 1, nj + 1), (rand(rng, 1:ni+1), rand(rng, 1:nj+1)), (rand(rng, 1:ni+1), rand(rng, 1:nj+1))]
+                for (a, b) in verts
+                    p = Structured.facevertex(grid, f, a, b)
+                    c = Structured.facecoords(grid, f, p)
+                    # a collapsed row (a pole) has no x coordinate to agree on
+                    collapsed = ni >= 1 && GrI._near(p, Structured.facevertex(grid, f, a == 1 ? 2 : 1, b))
+                    checked += 1
+                    (c !== nothing && (collapsed || _coord_close(c[1], xs[a], period[1])) && _coord_close(c[2], ys[b], period[2])) || (bad += 1)
+                end
+            end
+            bad == 0, "$bad of $checked vertices disagree"
+        end
+    end
+end
+function _coord_close(got, want, period)
+    d = Float64(got) - Float64(want)
+    period === nothing || (d = rem(d, Float64(period), RoundNearest))
+    return abs(d) <= 1e-6 * max(1.0, abs(Float64(want)))
+end
+
 # ------------------------------------------------------------------ location
 function check_location!(rep, grid, m, S, tree)
     F = :location
     tree === nothing && return skip!(rep, F, "no tree")
     analytic = GrI.location_is_analytic(grid)
-    if analytic && :cellat in rep.fallbacks
+    if analytic && !has_nonfallback_method(cellat, grid, cell_centroid(grid, S[1]))
         law!(rep, F, "declared analytic location is provided (not the fallback)", false,
             "location_is_analytic is true but cellat resolves to the generic fallback")
     end
@@ -524,7 +645,7 @@ end
 function check_neighbors!(rep, grid, m, S)
     F = :neighbors
     sh = cellshape(grid)
-    provided = !(:neighbors in rep.fallbacks)
+    provided = has_nonfallback_method(neighbors, grid, S[1])
     if !(sh isa GrI.Polygonal) && !provided
         return skip!(rep, F, "non-polygonal grid without its own neighbors")
     end
@@ -576,15 +697,28 @@ function check_neighbors!(rep, grid, m, S)
             info!(rep, F, "winding($(nameof(typeof(conn))))", string(nameof(typeof(w))))
         end
     end
-    guarded!(rep, F, "disc(i, k) is rings 1:k concatenated; maxneighbors(grid, k) bounds it") do
+    # rings 0:k concatenate to the k-disc with cell i in front: element for
+    # element when the grid declares an order (rings are never interleaved or
+    # sorted by id), as sets when it declares none; maxneighbors(grid, k) and
+    # maxring bound them (they size stack buffers, so an overrun is not a loose law)
+    ordered = !(winding(grid, Vertex()) isa Unordered)
+    guarded!(rep, F, "rings 0:k concatenate to the disc (k ≤ 2, " * (ordered ? "in order" : "as sets") * "); maxneighbors / maxring bound them") do
         ok = true; detail = ""
         for i in filter(i -> length(nb(i, Vertex())) <= 64, SS)[1:min(end, 8)], k in 1:2
             d = collect(neighbors(grid, i, k))
-            ok &= allunique(d) && !(i in d)
-            ok &= Set(d) == Set(vcat((collect(ring(grid, i, j)) for j in 1:k)...))
+            rs = [collect(ring(grid, i, j)) for j in 0:k]
+            ok &= allunique(d) && !(i in d) && rs[1] == [i]
+            cat = reduce(vcat, rs)
+            if ordered ? vcat(i, d) != cat : Set(vcat(i, d)) != Set(cat)
+                ok = false; detail = "cell $i: disc $k is $d, rings 0:$k are $rs"
+            end
             mx = GrI.maxneighbors(grid, k, Vertex())
             if mx !== nothing && length(d) > mx
                 ok = false; detail = "disc $k of cell $i has $(length(d)) > maxneighbors $mx"
+            end
+            mr = GrI.maxring(grid, k, Vertex())
+            if mr !== nothing && length(rs[end]) > mr
+                ok = false; detail = "ring $k of cell $i has $(length(rs[end])) > maxring $mr"
             end
         end
         ok, detail
@@ -733,7 +867,7 @@ end
 _nbrs(grid, k, conn) = collect(neighbors(grid, k; connectivity=conn))
 
 # ------------------------------------------------------------------ dual
-function check_dual!(rep, grid, m, S)
+function check_dual!(rep, grid, m, S, rng)
     F = :dual
     if !(conformity(grid) isa Conforming)
         guarded!(rep, F, "dual refused on a non-conforming grid") do
@@ -741,6 +875,25 @@ function check_dual!(rep, grid, m, S)
             e isa ArgumentError, "got $(typeof(e))"
         end
         return skip!(rep, F, "grid is $(nameof(typeof(conformity(grid)))) / $(nameof(typeof(cellshape(grid))))")
+    end
+    # a declared analytic trait backed only by the generic is a provider error,
+    # not a silent fallback (the core throws when the verbs are called; the law
+    # names the trait)
+    if GrI.vertices_are_analytic(grid)
+        law!(rep, F, "declared analytic vertices are provided (vertex_key, vertex_cells on keys; not the fallback)",
+            has_nonfallback_method(GrI.vertex_key, grid, S[1], 1) && has_nonfallback_method(GrI.vertex_cells, grid, GrI.VertexKey(S[1], 1)),
+            "vertices_are_analytic is true but the keyed verbs resolve to the generic")
+    end
+    if GrI.vertex_numbering_is_analytic(grid)
+        # with analytic keys the numbering is vertex_key / vertex_index and the
+        # dense verbs derive from the keys; without keys the dense verbs are the
+        # numbering and the keys derive from them
+        verbs = GrI.vertices_are_analytic(grid) ?
+            Any[(GrI.nvertices, ()), (GrI.vertex_key, (1,)), (GrI.vertex_index, (GrI.VertexKey(S[1], 1),))] :
+            Any[(GrI.nvertices, ()), (GrI.cell_vertices, (S[1],)), (GrI.vertex_cells, (1,)), (GrI.vertex_point, (1,))]
+        law!(rep, F, "declared analytic numbering is provided (nvertices; vertex_key and vertex_index with analytic keys, the dense verbs without; not the fallback)",
+            all(((f, args),) -> has_nonfallback_method(f, grid, args...), verbs),
+            "vertex_numbering_is_analytic is true but a numbering verb resolves to the generic")
     end
     if ncells(grid) > 50_000 && :nvertices in rep.fallbacks
         return skip!(rep, F, "geometric vertex merge skipped above 50k cells (ncells = $(ncells(grid)))")
@@ -773,12 +926,12 @@ function check_dual!(rep, grid, m, S)
             V.table === nothing && GrI.dual(grid).table === nothing
         end
         guarded!(rep, F, "analytic numbering: vertex_key and vertex_index are inverse on the plain grid") do
-            all(v -> GrI.vertex_index(grid, GrI.vertex_key(grid, v)) == v, sample_positions(nv, length(S))) &&
+            all(v -> GrI.vertex_index(grid, GrI.vertex_key(grid, v)) == v, sample_positions(rng, nv, length(S))) &&
             all(i -> all(k -> GrI.vertex_key(grid, GrI.vertex_index(grid, k)) == k, GrI.cell_vertex_keys(grid, i)), S)
         end
         if !GrI.vertices_are_analytic(grid)
             guarded!(rep, F, "analytic numbering: the derived keyed verbs agree with the provider's dense verbs") do
-                all(sample_positions(nv, length(S))) do v
+                all(sample_positions(rng, nv, length(S))) do v
                     k = GrI.vertex_key(grid, v)
                     collect(GrI.vertex_cells(grid, k)) == collect(GrI.vertex_cells(grid, v)) &&
                     _close(m, GrI.vertex_point(grid, k), GrI.vertex_point(grid, v)) &&
@@ -791,7 +944,7 @@ function check_dual!(rep, grid, m, S)
         GrI.nvertices(grid) == nv &&
         all(i -> collect(GrI.cell_vertices(grid, i)) == collect(GrI.cell_vertices(V, i)), S[1:min(end, 3)]) &&
         all(v -> collect(GrI.vertex_cells(grid, v)) == collect(GrI.vertex_cells(V, v)) &&
-                 GrI.vertex_point(grid, v) == GrI.vertex_point(V, v), sample_positions(nv, 3))
+                 GrI.vertex_point(grid, v) == GrI.vertex_point(V, v), sample_positions(rng, nv, 3))
     end
     grid = V
     guarded!(rep, F, "cell_vertices and vertex_cells are inverse incidences") do
@@ -799,7 +952,7 @@ function check_dual!(rep, grid, m, S)
         for i in S, v in GrI.cell_vertices(grid, i)
             ok &= i in GrI.vertex_cells(grid, v)
         end
-        for v in sample_positions(nv, length(S)), c in GrI.vertex_cells(grid, v)
+        for v in sample_positions(rng, nv, length(S)), c in GrI.vertex_cells(grid, v)
             ok &= v in GrI.cell_vertices(grid, c)
         end
         ok
@@ -810,18 +963,29 @@ function check_dual!(rep, grid, m, S)
         isempty(bad), "cells $(first(bad, 5))"
     end
     guarded!(rep, F, "vertex keys round-trip; dense numbering derived from them") do
-        all(v -> GrI.vertex_index(grid, GrI.vertex_key(grid, v)) == v, sample_positions(nv, length(S))) &&
+        all(v -> GrI.vertex_index(grid, GrI.vertex_key(grid, v)) == v, sample_positions(rng, nv, length(S))) &&
         all(i -> [GrI.vertex_index(grid, k) for k in GrI.cell_vertex_keys(grid, i)] == collect(GrI.cell_vertices(grid, i)), S)
     end
     guarded!(rep, F, "vertex_isopen: open iff the fan does not close; none on a global grid") do
-        Vs = sample_positions(nv, 4length(S))
+        Vs = sample_positions(rng, nv, 4length(S))
         nopen = count(v -> GrI.vertex_isopen(grid, v), Vs)
         metric!(rep, "open vertices (sampled)", "$nopen / $(length(Vs))")
         GrI.isglobal(grid) ? (nopen == 0, "$nopen open vertices on a global grid") : true
     end
+    # a reversed fan reads as open (its consecutive cells share no edge), so the
+    # order is checked on the fan itself, not only on the closed dual rings
+    guarded!(rep, F, "vertex fans wind CCW about the vertex (fans of ≥ 3 cells)") do
+        bad = Int[]
+        for v in sample_positions(rng, nv, length(S))
+            cs = collect(GrI.vertex_cells(grid, v))
+            length(cs) < 3 && continue
+            ring_is_ccw(m, [cell_centroid(grid, c) for c in cs], GrI.vertex_point(grid, v)) || push!(bad, v)
+        end
+        isempty(bad), "$(length(bad)) vertices, e.g. $(first(bad, 5))"
+    end
     guarded!(rep, F, "dual ring point k corresponds to fan cell k") do
         D = GrI.dual(grid); bad = 0
-        for v in sample_positions(nv, length(S))
+        for v in sample_positions(rng, nv, length(S))
             GrI.vertex_isopen(grid, v) && continue
             cs = collect(GrI.vertex_cells(grid, v)); b = collect(cell_boundary(D, v))
             length(cs) == length(b) || (bad += 1; continue)
@@ -841,7 +1005,7 @@ function check_dual!(rep, grid, m, S)
     D = GrI.dual(grid)
     guarded!(rep, F, "dual cells are valid CCW rings (≥ 3 points)") do
         bad = Int[]; degenerate = 0
-        for v in sample_positions(nv, length(S))
+        for v in sample_positions(rng, nv, length(S))
             b = cell_boundary(D, v)
             if length(b) < 3
                 degenerate += 1; push!(bad, v); continue
@@ -855,7 +1019,7 @@ function check_dual!(rep, grid, m, S)
 end
 
 # ------------------------------------------------------------------ subsets and chunks
-function check_subsets!(rep, grid, m, S)
+function check_subsets!(rep, grid, m, S, rng)
     F = :subsets
     rel = GrI.gridrelation(grid)
     if rel isa GrI.ParentGrid
@@ -925,9 +1089,9 @@ function check_subsets!(rep, grid, m, S)
         end
         guarded!(rep, F, "chunkat agrees with chunk membership (sampled)") do
             bad = 0
-            for j in sample_positions(length(ch), 16)
+            for j in sample_positions(rng, length(ch), 16)
                 c = ch[j]
-                for k in sample_positions(ncells(c), 8)
+                for k in sample_positions(rng, ncells(c), 8)
                     GrI.chunkat(grid, localindex(grid, cellindex(c, k))) == j || (bad += 1)
                 end
             end
@@ -935,15 +1099,15 @@ function check_subsets!(rep, grid, m, S)
         end
         guarded!(rep, F, "chunk extents are cheap") do
             c = ch[1]; GrI.grid_extent(c)
-            t = @elapsed for j in sample_positions(length(ch), 16); GrI.grid_extent(ch[j]); end
+            t = @elapsed for j in sample_positions(rng, length(ch), 16); GrI.grid_extent(ch[j]); end
             metric!(rep, "chunk extent μs", round(t / 16 * 1e6; digits=2))
             t / 16 < 1e-3, "$(t/16) s per chunk extent"
         end
         guarded!(rep, F, "each chunk's extent covers its cells") do
             bad = 0
-            for c in ch[sample_positions(length(ch), 16)]
+            for c in ch[sample_positions(rng, length(ch), 16)]
                 e = GrI.grid_extent(c)
-                for k in sample_positions(ncells(c), 8)
+                for k in sample_positions(rng, ncells(c), 8)
                     all(p -> extent_contains_point(m, e, p), _cellpts(c, k)) || (bad += 1)
                 end
             end
@@ -991,6 +1155,10 @@ function check_grid_performance!(rep, grid, S)
         T = Base.return_types(cell_centroid, Tuple{typeof(grid),Int})
         length(T) == 1 && isconcretetype(only(T)), string(T)
     end
+    guarded!(rep, F, "key verbs infer to one concrete type (literal k; a small Union{Nothing, T} for the lookups)") do
+        problems = inference_problems(grid, S[1])
+        isempty(problems), join(problems, "; ")
+    end
     try
         GrI.treeify(grid)
     catch e
@@ -1000,15 +1168,68 @@ function check_grid_performance!(rep, grid, S)
     a = _alloc(GrI.treeify, grid)
     metric!(rep, "treeify time", t)
     metric!(rep, "treeify bytes", a)
-    if GrI.location_is_analytic(grid)
-        p = cell_centroid(grid, S[end])
+    p = cell_centroid(grid, S[end])
+    if GrI.location_is_analytic(grid) && has_nonfallback_method(cellat, grid, p)
         guarded!(rep, F, "analytic cellat allocates nothing") do
             a = _alloc(cellat, grid, p)
             metric!(rep, "cellat bytes", a)
             a == 0, "$a bytes"
         end
     else
-        p = cell_centroid(grid, S[end])
+        # a fallback (or a false claim, failed by the location family) is measured, not held
         metric!(rep, "cellat (fallback) bytes", _alloc(cellat, grid, p))
     end
+end
+
+# One wrapper per literal `k`, so inference sees the shape a caller's kernel
+# has: the grid and the cell arrive as arguments while `k` is written into the
+# source. These must be real methods for `return_types` to have something to infer.
+_infer_cellindex(g, i) = cellindex(g, i)
+_infer_localindex(g, i) = localindex(g, cellindex(g, i))
+_infer_centroid(g, i) = cell_centroid(g, i)
+_infer_extent(g, i) = cell_extent(g, i)
+_infer_area(g, i) = cell_area(g, i)
+_infer_boundary(g, i) = cell_boundary(g, i)
+_infer_cellat(g, p) = cellat(g, p)
+_infer_nb(g, i) = neighbors(g, i)
+_infer_nb_1(g, i) = neighbors(g, i, 1)
+_infer_nb_2(g, i) = neighbors(g, i, 2)
+_infer_rg_1(g, i) = ring(g, i, 1)
+_infer_rg_2(g, i) = ring(g, i, 2)
+_infer_nb_e(g, i) = neighbors(g, i; connectivity=Edge())
+
+# concrete, or a small union of concrete types (what `Union{Nothing,Int}` splits to)
+_inferred_ok(t) = isconcretetype(t) || (t isa Union && all(isconcretetype, Base.uniontypes(t)) && length(Base.uniontypes(t)) <= 3)
+
+"""
+    inference_problems(grid, i) -> Vector{String}
+
+Whether the key verbs return a concrete type when `k` is a literal and the
+grid and position are run-time values (the shape every kernel has): identity,
+geometry, point location (a small `Union{Nothing,Int}` is allowed, it splits),
+neighbours and rings. A verb that infers a wider union is boxed for every
+caller, including the hot one-ring. Reported as one law in the performance
+family, listing each verb that does not infer.
+"""
+function inference_problems(grid, i)
+    problems = String[]
+    p = cell_centroid(grid, i)
+    checks = Any[("cellindex(g, i)", _infer_cellindex, Int), ("localindex(g, cellindex(g, i))", _infer_localindex, Int),
+        ("cell_centroid(g, i)", _infer_centroid, Int), ("cell_extent(g, i)", _infer_extent, Int),
+        ("cell_area(g, i)", _infer_area, Int), ("cellat(g, p)", _infer_cellat, typeof(p))]
+    cellshape(grid) isa SingleRing && push!(checks, ("cell_boundary(g, i)", _infer_boundary, Int))
+    if cellshape(grid) isa GrI.Polygonal
+        append!(checks, Any[("neighbors(g, i)", _infer_nb, Int), ("neighbors(g, i, 1)", _infer_nb_1, Int),
+            ("neighbors(g, i, 2)", _infer_nb_2, Int), ("ring(g, i, 1)", _infer_rg_1, Int), ("ring(g, i, 2)", _infer_rg_2, Int),
+            ("neighbors(g, i; connectivity = Edge())", _infer_nb_e, Int)])
+    end
+    for (label, f, A) in checks
+        types = Base.return_types(f, Tuple{typeof(grid),A})
+        if length(types) != 1
+            push!(problems, "$label infers $(length(types)) return types, not one")
+        elseif !_inferred_ok(only(types))
+            push!(problems, "$label infers $(only(types))")
+        end
+    end
+    return problems
 end
