@@ -2,7 +2,7 @@
 
 julia_version = "1.13.0"
 manifest_format = "2.1"
-project_hash = "9fab4d1708f59b867c67397ef5d3f68df95d9330"
+project_hash = "a1e612508f392d78462b59aaa39895dcc3599deb"
 
 [[deps.AbstractTrees]]
 git-tree-sha1 = "2d9c9a55f9c93e8887ad391fbae72f8ef55e1177"
@@ -394,7 +394,7 @@ version = "1.15.0"
     SharedArrays = "1a1011a3-84de-559e-8e89-a11a2f7dc383"
 
 [[deps.GridInterface]]
-deps = ["Extents", "GeoInterface", "GeometryOpsCore", "SpatialTreeInterface", "UnitSphericalGeometryCore"]
+deps = ["Extents", "GeoInterface", "GeometryOpsCore", "SmallCollections", "SpatialTreeInterface", "UnitSphericalGeometryCore"]
 path = "/home/anshul/.julia/dev/geo/gridinterface/GridInterface.jl"
 uuid = "7bba8399-ed35-4924-b5cf-83e2b32b3972"
 version = "0.0.1"

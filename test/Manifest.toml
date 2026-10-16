@@ -28,6 +28,13 @@ version = "1.11.0"
 uuid = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
 version = "1.11.0"
 
+[[deps.BitIntegers]]
+deps = ["Random"]
+git-tree-sha1 = "091d591a060e43df1dd35faab3ca284925c48e46"
+registries = "General"
+uuid = "c3b6d118-76ef-56ca-8cc7-ebb389d030a1"
+version = "0.3.7"
+
 [[deps.CRlibm]]
 deps = ["CRlibm_jll"]
 git-tree-sha1 = "66188d9d103b92b6cd705214242e27f5737a1e5e"
@@ -67,6 +74,13 @@ git-tree-sha1 = "a692a4c1dc59a4b8bc0b6403876eb3250fde2bc3"
 registries = "General"
 uuid = "a38c48d9-6df1-5ac9-9223-b6ada3b5572b"
 version = "0.1.0+0"
+
+[[deps.CpuId]]
+deps = ["Markdown", "PrecompileTools"]
+git-tree-sha1 = "5dbd5150b96f29553fc3b553c6bfb0eadf7ac204"
+registries = "General"
+uuid = "adafc99b-e345-5852-983c-f28acb93d879"
+version = "0.3.3"
 
 [[deps.DataAPI]]
 git-tree-sha1 = "abe83f3a2f1b857aac70ef8b269080af17764bbe"
@@ -174,7 +188,7 @@ uuid = "05efe853-fabf-41c8-927e-7063c8b9f013"
 version = "0.1.12"
 
 [[deps.GridInterface]]
-deps = ["Extents", "GeoInterface", "GeometryOpsCore", "SpatialTreeInterface", "UnitSphericalGeometryCore"]
+deps = ["Extents", "GeoInterface", "GeometryOpsCore", "SmallCollections", "SpatialTreeInterface", "UnitSphericalGeometryCore"]
 path = ".."
 uuid = "7bba8399-ed35-4924-b5cf-83e2b32b3972"
 version = "0.0.1"
@@ -374,6 +388,21 @@ version = "1.0.0"
 [[deps.Serialization]]
 uuid = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
 version = "1.11.0"
+
+[[deps.SmallCollections]]
+deps = ["BitIntegers", "CpuId", "LinearAlgebra", "Random"]
+git-tree-sha1 = "7b5124b89a89d7c0030e4fe28256a1df680538be"
+registries = "General"
+uuid = "2b935e18-93d6-40ac-ae34-fe54c09f00e1"
+version = "0.6.3"
+
+    [deps.SmallCollections.extensions]
+    BangBangExt = "BangBang"
+    StaticArraysExt = "StaticArrays"
+
+    [deps.SmallCollections.weakdeps]
+    BangBang = "198e06fe-97b7-11e9-32a5-e1d131e6ad66"
+    StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [[deps.SortTileRecursiveTree]]
 deps = ["AbstractTrees", "Extents", "GeoInterface"]

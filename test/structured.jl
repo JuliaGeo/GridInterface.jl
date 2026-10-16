@@ -131,10 +131,10 @@ _sameptr(a, b) = all(abs.(a .- b) .< 1e-9)
     @test neighbors(cb, 72; connectivity=Edge()) == [36, 37, 108, 71]           # dateline cell (36, 2): east is column 1
     @test neighbors(cb, 72) == [36, 1, 37, 73, 108, 107, 71, 35]                # with the two diagonal wraps
     @test Structured.facefan(cb, 1, 7, 1) == 36:-1:1 && Structured.facefan(cb, 1, 7, 19) == 613:648   # pole fans: every polar cell
-    @test Structured.facefan(cb, 1, 7, 5) isa SmallInts{4} && Structured.facefan(rg, 1, 1, 1) == [1]
+    @test Structured.facefan(cb, 1, 7, 5) isa SmallVector{4,Int} && Structured.facefan(rg, 1, 1, 1) == [1]
     @test maxneighbors(cb, Vertex()) === nothing && maxneighbors(rg, Vertex()) == 8 && maxneighbors(cube, Vertex()) == 8
-    @test neighbors(cb, 40; connectivity=Edge()) isa SmallInts{4} && neighbors(cb, 40) isa SmallInts{8} && neighbors(cb, 72) isa SmallInts{8}
-    @test neighbors(cb, 1) isa Vector{Int} && neighbors(cube, 1) isa SmallInts{8}
+    @test neighbors(cb, 40; connectivity=Edge()) isa SmallVector{4,Int} && neighbors(cb, 40) isa SmallVector{8,Int} && neighbors(cb, 72) isa SmallVector{8,Int}
+    @test neighbors(cb, 1) isa Vector{Int} && neighbors(cube, 1) isa SmallVector{8,Int}
     @test (@allocated neighbors(cb, 40; connectivity=Edge())) == 0 && (@allocated neighbors(cb, 72; connectivity=Edge())) == 0
     @test (@allocated neighbors(cb, 40)) == 0 && (@allocated neighbors(cb, 72)) == 0 && (@allocated neighbors(cube, 14)) == 0
     # declared seams beat detection: a wrap column off by 1e-9 reads as an open border unless the grid says otherwise
@@ -195,7 +195,7 @@ _sameptr(a, b) = all(abs.(a .- b) .< 1e-9)
     @test vertex_key(cb, 72, 2) == VertexKey(1, 3) && vertex_key(cb, 72, 3) == VertexKey(37, 4)
     @test all(c -> vertex_key(cb, vertex_index(cb, VertexKey(72, c))) == vertex_key(cb, 72, c), 1:4)
     @test all(c -> vertex_key(cube, vertex_index(cube, VertexKey(12, c))) == vertex_key(cube, 12, c), 1:4)
-    @test Set(vertex_cells(cb, vertex_key(cb, 72, 2))) == Set([36, 72, 37, 1]) && vertex_cells(cb, vertex_key(cb, 72, 2)) isa SmallInts{4}
+    @test Set(vertex_cells(cb, vertex_key(cb, 72, 2))) == Set([36, 72, 37, 1]) && vertex_cells(cb, vertex_key(cb, 72, 2)) isa SmallVector{4,Int}
     @test nvertices(rg) == 21 * 11 && count(v -> vertex_isopen(rg, v), 1:nvertices(rg)) == 2 * 21 + 2 * 9
     D = dual(cube)
     @test sum(v -> cell_area(D, v), 1:ncells(D)) ≈ 4π rtol = 1e-8

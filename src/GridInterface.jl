@@ -51,8 +51,11 @@ import GeometryOpsCore as GOC
 import GeometryOpsCore: Manifold, Planar, Spherical, best_manifold
 import Extents
 import GeoInterface as GI
+# Small answers (neighbour rings, vertex fans, the corners of a cell with a
+# bounded vertex count) are `SmallVector{N,T}`: capacity N, a runtime length,
+# no heap storage. Re-exported so providers need no separate dependency.
+using SmallCollections: SmallVector, push
 
-include("smallvec.jl")
 include("fallbacks.jl")
 include("lazy.jl")
 include("identity.jl")
@@ -71,7 +74,7 @@ include("structured/Structured.jl")
 export AbstractGrid, isgrid
 export AbstractCellIndex, iscellindex, ncells, cellindex, cellindextypes, reindex, localindex, globalindex, level
 export Index, Local, Global, OUTSIDE
-export SmallInts
+export SmallVector
 # --- geometry and location
 export CellShape, Polygonal, SingleRing, ConvexCells, SimpleCells, GeneralCells, cellshape
 export EdgeKind, GeodesicEdges, CurvedEdges, edgekind

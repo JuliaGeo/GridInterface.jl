@@ -21,7 +21,7 @@ Pkg.develop([
     PackageSpec(path=joinpath(DGG, "lib", "GlobalRegridding")),
     PackageSpec(path=DGG),
 ])
-Pkg.add(["BenchmarkTools", "GeometryOpsCore", "Extents", "GeoInterface", "Test",
+Pkg.add(["BenchmarkTools", "GeometryOpsCore", "SmallCollections", "Extents", "GeoInterface", "Test",
          "Healpix", "SparseArrays", "LinearAlgebra", "StaticArrays", "Random"])
 Pkg.instantiate()
 @time using GridInterface, DiscreteGlobalGrids, ConservativeRegridding

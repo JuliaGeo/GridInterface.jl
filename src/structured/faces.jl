@@ -139,7 +139,7 @@ Positions of the cells around lattice vertex `(a, b)` of face `f`,
 counter-clockwise (an open fan starts just after its gap). Default: walk
 around the vertex through [`facecross`](@ref) (at most 4 cells on a regular
 vertex, 3 at a cube corner, stopping at a boundary for an open fan), a
-`SmallInts{4}`. A provider overrides it only where the walk cannot reach
+`SmallVector{4,Int}`. A provider overrides it only where the walk cannot reach
 every cell, such as a lon/lat pole where every cell of the polar row meets,
 in which case the result may be a `Vector`.
 """
@@ -417,7 +417,7 @@ function _fanwalk(g, f, a, b)
         i, j, t = a, b - 1, 4
     end
     k0 = faceposition(g, f, i, j)
-    ccw = GrI.push(SmallInts{4}(), k0)
+    ccw = push(SmallVector{4,Int}(), k0)
     f1, i1, j1, t1 = f, i, j, t
     while true
         x = _cross(g, f1, i1, j1, mod1(t1 - 1, 4))
@@ -426,10 +426,10 @@ function _fanwalk(g, f, a, b)
         k = faceposition(g, f1, i1, j1)
         k == k0 && return ccw                      # closed
         length(ccw) < 4 || _throw_fan(g, f, a, b)
-        ccw = GrI.push(ccw, k); t1 = s2
+        ccw = push(ccw, k); t1 = s2
     end
     # open: the cells clockwise of k0 come first, nearest the gap first
-    cw = SmallInts{4}()
+    cw = SmallVector{4,Int}()
     f1, i1, j1, t1 = f, i, j, t
     while true
         x = _cross(g, f1, i1, j1, t1)
@@ -438,14 +438,14 @@ function _fanwalk(g, f, a, b)
         k = faceposition(g, f1, i1, j1)
         k == k0 && break
         length(cw) + length(ccw) < 4 || _throw_fan(g, f, a, b)
-        cw = GrI.push(cw, k); t1 = mod1(s2 + 1, 4)
+        cw = push(cw, k); t1 = mod1(s2 + 1, 4)
     end
-    out = SmallInts{4}()
+    out = SmallVector{4,Int}()
     for q in length(cw):-1:1
-        out = GrI.push(out, cw[q])
+        out = push(out, cw[q])
     end
     for q in 1:length(ccw)
-        out = GrI.push(out, ccw[q])
+        out = push(out, ccw[q])
     end
     return out
 end
@@ -462,17 +462,17 @@ GrI.winding(::AbstractStructuredGrid, ::Connectivity) = CounterClockwise()
 GrI.maxneighbors(::AbstractStructuredGrid, ::Edge) = 4
 GrI.maxneighbors(::AbstractStructuredGrid, ::Vertex) = 8
 
-# x appended unless already present; SmallInts stays on the stack. A Vector
+# x appended unless already present; SmallVector stays on the stack. A Vector
 # (a pole fan of thousands) is deduplicated once at the end instead, keeping
 # first occurrences as the scan would.
-@inline function _add(s::SmallInts, x::Int)
+@inline function _add(s::SmallVector{N,Int}, x::Int) where {N}
     for q in 1:length(s)
         s[q] == x && return s
     end
-    return GrI.push(s, x)
+    return push(s, x)
 end
 @inline _add(v::Vector{Int}, x::Int) = (push!(v, x); v)
-@inline _finish(s::SmallInts) = s
+@inline _finish(s::SmallVector) = s
 @inline _finish(v::Vector{Int}) = unique!(v)
 
 function GrI.neighbors(g::AbstractStructuredGrid, k::Integer; connectivity::Connectivity=Vertex())
@@ -480,7 +480,7 @@ function GrI.neighbors(g::AbstractStructuredGrid, k::Integer; connectivity::Conn
     f, i, j = _facecell(g, k)
     across = (_across(g, f, i, j, 1), _across(g, f, i, j, 2), _across(g, f, i, j, 3), _across(g, f, i, j, 4))
     if connectivity isa Edge
-        out = SmallInts{4}()
+        out = SmallVector{4,Int}()
         for t in 1:4
             q = across[t]
             (q == 0 || q == k) || (out = _add(out, q))
@@ -491,8 +491,8 @@ function GrI.neighbors(g::AbstractStructuredGrid, k::Integer; connectivity::Conn
     # on its own so the stack path sees a concrete tuple
     F2 = _cornerfan(g, f, i, j, 2); F3 = _cornerfan(g, f, i, j, 3)
     F4 = _cornerfan(g, f, i, j, 4); F1 = _cornerfan(g, f, i, j, 1)
-    if F2 isa SmallInts{4} && F3 isa SmallInts{4} && F4 isa SmallInts{4} && F1 isa SmallInts{4}
-        return _vertex_neighbors(SmallInts{8}(), k, across, (F2, F3, F4, F1))
+    if F2 isa SmallVector{4,Int} && F3 isa SmallVector{4,Int} && F4 isa SmallVector{4,Int} && F1 isa SmallVector{4,Int}
+        return _vertex_neighbors(SmallVector{8,Int}(), k, across, (F2, F3, F4, F1))
     end
     return _vertex_neighbors(Int[], k, across, (F2, F3, F4, F1))
 end

@@ -28,6 +28,7 @@ module DGGAdapter
 
 import GridInterface as GrI
 using GridInterface
+using SmallCollections: SmallVector, push, pushfirst
 import DiscreteGlobalGrids as DGG
 const FB = DGG.Fallbacks
 const HP = DGG.HEALPix
@@ -153,22 +154,16 @@ end
 # Corners are N, W, S, E; edge k = (corner k, corner k+1).
 const _HP_EDGE = (3, 1, 7, 5)                   # NW, SW, SE, NE: across edges NW, WS, SE, EN
 const _HP_VERT = (3, 2, 1, 8, 7, 6, 5, 4)       # NW, W, SW, S, SE, E, NE, N
-@inline function _hp_pick(nb, i::Int, slots::NTuple{K,Int}) where {K}
-    out = ntuple(_ -> 0, Val(K)); n = 0
+@inline function _hp_pick(::Val{C}, nb, i::Int, slots::NTuple{K,Int}) where {C,K}
+    out = SmallVector{C,Int}()
     for m in slots
         q = nb[m]
         q < 0 && continue
         p = Int(q) + 1
-        p == i && continue
-        dup = false
-        for j in 1:n
-            out[j] == p && (dup = true)
-        end
-        dup && continue
-        n += 1
-        out = Base.setindex(out, p, n)
+        (p == i || p in out) && continue
+        out = push(out, p)
     end
-    return SmallInts(out, n)
+    return out
 end
 @inline function _hp_nb(g::HPG, i::Integer)
     1 <= i <= DGG.ncells(g) || throw(BoundsError(g, i))
@@ -176,9 +171,8 @@ end
 end
 function GrI.neighbors(g::HPG, i::Integer; connectivity::GrI.Connectivity=GrI.Vertex())
     nb = _hp_nb(g, i)
-    return connectivity isa GrI.Edge ? _pad8(_hp_pick(nb, Int(i), _HP_EDGE)) : _hp_pick(nb, Int(i), _HP_VERT)
+    return connectivity isa GrI.Edge ? _hp_pick(Val(8), nb, Int(i), _HP_EDGE) : _hp_pick(Val(8), nb, Int(i), _HP_VERT)
 end
-_pad8(s::SmallInts{4}) = SmallInts{8}(ntuple(k -> k <= 4 ? s.v[k] : 0, Val(8)), s.n)
 function GrI.neighbors(g::HPG, i::Integer, k::Integer; connectivity::GrI.Connectivity=GrI.Vertex())
     r1 = GrI.neighbors(g, i; connectivity)
     k <= 1 && return k == 1 ? collect(r1) : Int[]
@@ -289,8 +283,7 @@ end
 @inline function _hp_fan(g::HPG, i::Int, k::Int)
     1 <= k <= 4 || throw(BoundsError(1:4, k))
     nb = _hp_nb(g, i)
-    s = _hp_pick(nb, i, _HP_FAN[k])
-    return SmallInts((i, s.v[1], s.v[2], s.v[3]), s.n + 1)
+    return pushfirst(_hp_pick(Val(4), nb, i, _HP_FAN[k]), i)
 end
 @inline _d2(a, b) = (a[1] - b[1])^2 + (a[2] - b[2])^2 + (a[3] - b[3])^2
 # lattice offset of corner k (N, W, S, E) from the pixel's (ix, iy)

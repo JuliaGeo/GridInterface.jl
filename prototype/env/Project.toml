@@ -12,6 +12,7 @@ GridInterfaceConformance = "aa8aab9d-9df5-42a8-9a40-2377a5cb432e"
 Healpix = "9f4e344d-96bc-545a-84a3-ae6b9e1b672b"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+SmallCollections = "2b935e18-93d6-40ac-ae34-fe54c09f00e1"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 SpatialTreeInterface = "bf42099b-6274-40f2-a94d-272408263a4f"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
@@ -20,8 +21,8 @@ UnitSphericalGeometryCore = "374d2b58-edf9-4f97-868a-42ae1c074d0a"
 
 [sources]
 ConservativeRegridding = {path = "/home/anshul/.julia/dev/geo/gridinterface/ConservativeRegridding.jl"}
-GeometryOps = {path = "/home/anshul/.julia/dev/geo/GeometryOps-split"}
 DiscreteGlobalGrids = {path = "/home/anshul/.julia/dev/geo/gridinterface/DiscreteGlobalGrids.jl"}
+GeometryOps = {path = "/home/anshul/.julia/dev/geo/GeometryOps-split"}
 GlobalRegridding = {path = "/home/anshul/.julia/dev/geo/gridinterface/DiscreteGlobalGrids.jl/lib/GlobalRegridding"}
 GridInterface = {path = "/home/anshul/.julia/dev/geo/gridinterface/GridInterface.jl"}
 GridInterfaceConformance = {path = "/home/anshul/.julia/dev/geo/gridinterface/GridInterface.jl/lib/GridInterfaceConformance"}
