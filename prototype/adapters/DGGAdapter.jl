@@ -144,15 +144,6 @@ function GrI.winding(g::G, c::GrI.Connectivity)
     return w isa GrI.CounterClockwise && !(g isa HPG) ? GrI.CustomOrder() : w
 end
 
-"A fixed-capacity vector of Int on the stack (neighbour rings, vertex fans)."
-struct SmallInts{N} <: AbstractVector{Int}
-    v::NTuple{N,Int}
-    n::Int
-end
-Base.size(s::SmallInts) = (s.n,)
-Base.IndexStyle(::Type{<:SmallInts}) = IndexLinear()
-Base.@propagate_inbounds Base.getindex(s::SmallInts, i::Int) = (@boundscheck checkbounds(s, i); s.v[i])
-
 # HEALPix: nested_neighbors gives compass slots SW, W, NW, N, NE, E, SE, S (1..8),
 # -1 where a degree-3 vertex has no diagonal neighbour; level 0 repeats.
 # Corners are N, W, S, E; edge k = (corner k, corner k+1).
@@ -181,10 +172,9 @@ end
 end
 function GrI.neighbors(g::HPG, i::Integer; connectivity::GrI.Connectivity=GrI.Vertex())
     nb = _hp_nb(g, i)
-    return connectivity isa GrI.Edge ? SmallInts(_pad8(_hp_pick(nb, Int(i), _HP_EDGE))) : _hp_pick(nb, Int(i), _HP_VERT)
+    return connectivity isa GrI.Edge ? _pad8(_hp_pick(nb, Int(i), _HP_EDGE)) : _hp_pick(nb, Int(i), _HP_VERT)
 end
-_pad8(s::SmallInts{4}) = (ntuple(k -> k <= 4 ? s.v[k] : 0, Val(8)), s.n)
-SmallInts(t::Tuple{NTuple{8,Int},Int}) = SmallInts{8}(t[1], t[2])
+_pad8(s::SmallInts{4}) = SmallInts{8}(ntuple(k -> k <= 4 ? s.v[k] : 0, Val(8)), s.n)
 function GrI.neighbors(g::HPG, i::Integer, k::Integer; connectivity::GrI.Connectivity=GrI.Vertex())
     r1 = GrI.neighbors(g, i; connectivity)
     k <= 1 && return k == 1 ? collect(r1) : Int[]

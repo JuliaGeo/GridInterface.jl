@@ -4,7 +4,7 @@ using GridInterface, BenchmarkTools, Test, SparseArrays, LinearAlgebra
 import GridInterface as GrI
 include(joinpath(@__DIR__, "adapters", "DGGAdapter.jl")); using .DGGAdapter
 include(joinpath(@__DIR__, "adapters", "CRAdapter.jl")); using .CRAdapter
-import Extents, GeometryOps as GO
+import Extents, GeometryOps as GO, GeometryOpsCore as GOC
 const FB = DGG.Fallbacks
 
 fmt(t) = t < 1e-6 ? string(round(t * 1e9; digits=1), " ns") : t < 1e-3 ? string(round(t * 1e6; digits=2), " µs") :
@@ -104,3 +104,35 @@ colpos = [localindex(expanded, DGG.cellindex(lg_ref, r)) for r in rows]
 P = sparse(colpos, cols, 1.0, ncells(expanded), ncells(mls))
 gap = maximum(abs.(R_exp.intersections * P - R_set.intersections)) / maximum(R_set.intersections)
 println("today's expansion path: ", size(R_exp.intersections), " in ", fmt(t_exp), "; R_expanded·P vs R_set max rel gap ", gap)
+
+section("6. regrid parity: CR grids through their Structured twins vs CR's own path (bit-identical)")
+function cr_parity(name, dst_cr, src_cr)
+    R_cr = CR.Regridder(dst_cr, src_cr; threaded=false)                                        # CR's own grids and quadtree
+    R_gi = CR.Regridder(cr_tree(structured(dst_cr)), cr_tree(structured(src_cr)); threaded=false)   # the twins through the bridge
+    t_cr = @elapsed CR.Regridder(dst_cr, src_cr; threaded=false)
+    t_gi = @elapsed CR.Regridder(cr_tree(structured(dst_cr)), cr_tree(structured(src_cr)); threaded=false)
+    A, B = R_cr.intersections, R_gi.intersections
+    same = A == B && R_cr.dst_areas == R_gi.dst_areas && R_cr.src_areas == R_gi.src_areas
+    println(rpad(name, 50), size(A), " nnz ", nnz(A), "  bit-identical: ", same, "  max|Δ| ", maximum(abs.(A - B); init=0.0),
+        "  time CR ", fmt(t_cr), " / twins ", fmt(t_gi))
+    return same
+end
+ll36 = cr_lonlat_grid(36, 18); ll72 = cr_lonlat_grid(72, 36)
+cr_parity("lon/lat 36×18 ← lon/lat 72×36 (CellBasedGrid)", ll36, ll72)
+# CR's own path cannot clip a spherical RegularGrid (its cells are lon/lat tuples); its twin has the
+# same geodesic quads as the CellBasedGrid of the same corners, so compare against CR on that.
+let rg = structured(cr_lonlat_grid(36, 18; cellbased=false))
+    R_cr = CR.Regridder(ll36, ll72; threaded=false)
+    R_gi = CR.Regridder(cr_tree(rg), cr_tree(structured(ll72)); threaded=false)
+    println(rpad("RegularGrid lon/lat 36×18 twin ← lon/lat 72×36", 50), size(R_gi.intersections), " nnz ", nnz(R_gi.intersections),
+        "  bit-identical to CR's CellBasedGrid 36×18: ", R_cr.intersections == R_gi.intersections && R_cr.dst_areas == R_gi.dst_areas)
+end
+cr_parity("RegularGrid planar 20×10 ← RegularGrid planar 30×15",
+    Trees.RegularGrid(GOC.Planar(), collect(0.0:1.0:20.0), collect(0.0:1.0:10.0)),
+    Trees.RegularGrid(GOC.Planar(), collect(range(0.0, 20.0; length=31)), collect(range(0.0, 10.0; length=16))))
+let dst = GrI.levelgrid(hp, 3), ll36 = cr_lonlat_grid(36, 18; manifold=GOC.Spherical(; radius=1.0))   # DGG's unit sphere
+    R_cr = CR.Regridder(dst, ll36; threaded=false)
+    R_gi = CR.Regridder(cr_tree(dst), cr_tree(structured(ll36)); threaded=false)
+    println(rpad("HEALPix L3 ← lon/lat 36×18 (CellBasedGrid)", 50), size(R_cr.intersections), " nnz ", nnz(R_cr.intersections),
+        "  bit-identical: ", R_cr.intersections == R_gi.intersections && R_cr.src_areas == R_gi.src_areas)
+end

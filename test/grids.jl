@@ -51,32 +51,63 @@ GrI.tessellation(::PolygonBag) = GrI.Overlapping()
 GrI.cell_geometry(b::PolygonBag, i::Integer) = b.geoms[i]
 
 # ---------------------------------------------------------------------------
-# 3. A tiny spherical grid: gnomonic cube sphere, n × n cells per face. Edges
-#    are great-circle arcs, so the cells are convex. Required set only.
+# 3. A tiny spherical grid: gnomonic cube sphere, n × n cells per face, as a
+#    six-face member of the structured family (the five face hooks only).
+#    Edges are great-circle arcs, so the cells are convex. Positions are
+#    face-major, column-major within a face.
 # ---------------------------------------------------------------------------
-struct TinyCubeSphere <: GrI.AbstractGrid
+using GridInterface.Structured
+struct TinyCubeSphere <: Structured.AbstractStructuredGrid
     n::Int
 end
 const _FACES = (((1, 0, 0), (0, 1, 0), (0, 0, 1)), ((-1, 0, 0), (0, 0, 1), (0, 1, 0)),
                 ((0, 1, 0), (0, 0, 1), (1, 0, 0)), ((0, -1, 0), (1, 0, 0), (0, 0, 1)),
                 ((0, 0, 1), (1, 0, 0), (0, 1, 0)), ((0, 0, -1), (0, 1, 0), (1, 0, 0)))
-GrI.ncells(g::TinyCubeSphere) = 6 * g.n^2
 GOC.best_manifold(::TinyCubeSphere) = GOC.Spherical(; radius=1.0)
-GrI.cellshape(::TinyCubeSphere) = GrI.ConvexCells()
+GrI.isglobal(::TinyCubeSphere) = true
 @inline function _cubept(f, u, v)
     N, U, V = _FACES[f]
     x = N[1] + u * U[1] + v * V[1]; y = N[2] + u * U[2] + v * V[2]; z = N[3] + u * U[3] + v * V[3]
     r = sqrt(x^2 + y^2 + z^2)
     return UnitSphericalPoint(x / r, y / r, z / r)
 end
-function GrI.cell_boundary(g::TinyCubeSphere, i::Integer)
-    1 <= i <= GrI.ncells(g) || throw(BoundsError(g, i))
+Structured.nfaces(::TinyCubeSphere) = 6
+Structured.facesize(g::TinyCubeSphere, f) = (g.n, g.n)
+Structured.facevertex(g::TinyCubeSphere, f, a, b) = _cubept(f, -1 + 2(a - 1) / g.n, -1 + 2(b - 1) / g.n)
+Structured.faceposition(g::TinyCubeSphere, f, i, j) = (f - 1) * g.n^2 + (j - 1) * g.n + i
+function Structured.facecell(g::TinyCubeSphere, k)
     n = g.n
-    f = (i - 1) ÷ n^2 + 1
-    k = (i - 1) % n^2
-    a = k % n; b = k ÷ n
-    u0 = -1 + 2a / n; u1 = -1 + 2(a + 1) / n; v0 = -1 + 2b / n; v1 = -1 + 2(b + 1) / n
-    return SRing((_cubept(f, u0, v0), _cubept(f, u1, v0), _cubept(f, u1, v1), _cubept(f, u0, v1)))
+    f = (k - 1) ÷ n^2 + 1
+    r = (k - 1) % n^2
+    return (f, r % n + 1, r ÷ n + 1)
+end
+# The face and side across each face's side and whether it runs the other way,
+# found by matching the two end vertices of the sides in `_cubept`'s chart
+# (side s runs from corner s to corner s+1 of the face's (u, v) square).
+_samept(a, b) = all(abs.(a .- b) .< 1e-9)
+const _CUBE_SEAMS = let
+    corner(f, c) = _cubept(f, ((-1, 1, 1, -1))[c], ((-1, -1, 1, 1))[c])
+    ends(f, s) = (corner(f, s), corner(f, mod1(s + 1, 4)))
+    ntuple(f -> ntuple(s -> begin
+            p, q = ends(f, s)
+            for f2 in 1:6, s2 in 1:4
+                (f2 == f && s2 == s) && continue
+                p2, q2 = ends(f2, s2)
+                _samept(p, q2) && _samept(q, p2) && return (f2, s2, true)
+                _samept(p, p2) && _samept(q, q2) && return (f2, s2, false)
+            end
+            error("cube edge ($f, $s) has no partner")
+        end, 4), 6)
+end
+# position p along a side, counted from the side's start, and back
+_cube_sidepos(n, i, j, s) = s == 1 ? i : s == 2 ? j : s == 3 ? n + 1 - i : n + 1 - j
+_cube_sidecell(n, s, p) = s == 1 ? (p, 1) : s == 2 ? (n, p) : s == 3 ? (n + 1 - p, n) : (1, n + 1 - p)
+function Structured.facecross(g::TinyCubeSphere, f, i, j, s)
+    f2, s2, rev = _CUBE_SEAMS[f][s]
+    p = _cube_sidepos(g.n, i, j, s)
+    rev && (p = g.n + 1 - p)
+    i2, j2 = _cube_sidecell(g.n, s2, p)
+    return (f2, i2, j2, s2)
 end
 
 # ---------------------------------------------------------------------------

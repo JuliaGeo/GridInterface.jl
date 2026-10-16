@@ -23,15 +23,15 @@ for (name, sys) in (("HEALPix", DGG.HEALPixSystem()), ("IGeo7", DGG.IGeo7System(
     t = @elapsed rep = check_multilevel(dgg_multilevel(set); name="$name MultiOrderCoverage Europe, level ≤ 6")
     report(rep, t)
 end
-# CR grids
+# CR grids, through their Structured twins (what any consumer given a CR grid builds)
 warp = [GO.UnitSphereFromGeographic()((lo + 6sind(3la), la + 4sind(2lo))) for lo in range(-60, 60; length=25), la in range(-40, 50; length=19)]
 polys = [GI.Polygon([[(i + 0.2j, j), (i + 1 + 0.2j, j), (i + 1.2 + 0.2j, j + 1), (i + 0.2 + 0.2j, j + 1), (i + 0.2j, j)]]) for i in 0:7, j in 0:5]
 for (name, g) in (
         ("CR CellBasedGrid lon/lat 36x18 (Spherical)", lonlat_grid(36, 18)),
-        ("CR CellBasedGrid warped curvilinear 24x18 (Spherical)", Trees.CellBasedGrid(GOC.Spherical(), warp)),
-        ("CR RegularGrid 20x10 (Planar)", Trees.RegularGrid(GOC.Planar(), collect(0.0:1.0:20.0), collect(0.0:1.0:10.0))),
+        ("CR CellBasedGrid warped curvilinear 24x18 (Spherical)", structured(Trees.CellBasedGrid(GOC.Spherical(), warp))),
+        ("CR RegularGrid 20x10 (Planar)", structured(Trees.RegularGrid(GOC.Planar(), collect(0.0:1.0:20.0), collect(0.0:1.0:10.0)))),
         ("CR RegularGrid lon/lat 36x18 (Spherical)", lonlat_grid(36, 18; cellbased=false)),
-        ("CR ExplicitPolygonGrid sheared 8x6 (Planar)", Trees.ExplicitPolygonGrid(GOC.Planar(), polys)),
+        ("CR ExplicitPolygonGrid sheared 8x6 (Planar)", structured(Trees.ExplicitPolygonGrid(GOC.Planar(), polys))),
         ("Healpix.HealpixMap nside 4 via CR ext", Healpix.HealpixMap{Float64,Healpix.RingOrder}(4)))
     t = @elapsed rep = check_grid(g; name)
     report(rep, t)

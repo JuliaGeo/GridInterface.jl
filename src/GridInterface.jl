@@ -52,6 +52,7 @@ import GeometryOpsCore: Manifold, Planar, Spherical, best_manifold
 import Extents
 import GeoInterface as GI
 
+include("smallvec.jl")
 include("fallbacks.jl")
 include("lazy.jl")
 include("identity.jl")
@@ -64,11 +65,13 @@ include("hierarchy.jl")
 include("cursor.jl")
 include("multilevel.jl")
 include("wrappers.jl")
+include("structured/Structured.jl")
 
 # --- identity
 export AbstractGrid, isgrid
 export AbstractCellIndex, iscellindex, ncells, cellindex, cellindextypes, reindex, localindex, globalindex, level
 export Index, Local, Global, OUTSIDE
+export SmallInts
 # --- geometry and location
 export CellShape, Polygonal, SingleRing, ConvexCells, SimpleCells, GeneralCells, cellshape
 export EdgeKind, GeodesicEdges, CurvedEdges, edgekind

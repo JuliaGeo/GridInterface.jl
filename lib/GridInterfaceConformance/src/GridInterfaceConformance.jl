@@ -25,6 +25,7 @@ using GridInterface: ncells, cellindex, cellindextypes, localindex, globalindex,
     SingleRing, ConvexCells, GeneralCells, Tessellating, Overlapping, Conforming, NonConforming,
     Edge, Vertex, CounterClockwise, Clockwise
 const STI = GrI.STI
+const Structured = GrI.Structured
 import GeometryOps as GO
 using GeometryOps.UnitSpherical: UnitSphericalPoint, SphericalCap, spherical_distance
 import GeometryOpsCore as GOC

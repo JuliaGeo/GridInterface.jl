@@ -433,11 +433,11 @@ end
     @test st[:performance] === :fail
     @test all(f -> st[f] !== :fail, setdiff(keys(st), [:performance]))
     @test st[:dual] === :pass && st[:neighbors] === :pass   # dual: refusal is the law that passes; touching neighbours
-    # The dual of a fallback-vertex grid builds each ring per call: everything
-    # passes except the allocation-free extent sweep.
+    # The dual of the cube builds each ring per call from stack-allocated fans:
+    # even the allocation-free extent sweep passes.
     rep = check_grid(dual(TinyCubeSphere(2)); name="dual of TinyCubeSphere")
     fails = [r.law for r in rep.results if r.status === :fail]
-    @test fails == ["forwarding sweep over extent allocates nothing"]
+    @test isempty(fails)
     rep = check_system(QuadSystem(5); name="QuadSystem")
     @test !any(r -> r.status === :fail, rep.results)
     any(r -> r.status === :fail, rep.results) && print_report(rep)
@@ -449,5 +449,7 @@ end
     @test !any(r -> r.status === :fail, rep.results)
     any(r -> r.status === :fail, rep.results) && print_report(rep)
 end
+
+include("structured.jl")
 
 end

@@ -604,6 +604,9 @@ function check_neighbors!(rep, grid, m, S)
             isempty(bad), "$(length(bad)) of $(length(SS)) cells, e.g. $(first(bad, 5))"
         end
     end
+    if Structured.isstructured(grid) && sh isa SingleRing
+        check_seams!(rep, grid, S)
+    end
     guarded!(rep, F, "rings partition the disc (k ≤ 2)") do
         ok = true
         for i in filter(i -> length(nb(i, Vertex())) <= 64, SS)[1:min(end, 8)]
@@ -618,6 +621,116 @@ function check_neighbors!(rep, grid, m, S)
     end
     metric!(rep, "neighbors answered by", provided ? "provider" : "geometric fallback")
 end
+
+# --- structured seams: the arithmetic hooks against a shared-vertex scan ---------
+# The oracle knows nothing of `facecross`: a cell touches another when they
+# hold a common lattice vertex point, and lies across a side when it holds
+# both of the side's points. Candidates are the in-face block around the cell
+# and the border cells of every face (the only cells a seam can lead to).
+struct SeamOracle{T}
+    border::Vector{Tuple{Int,T}}       # (position, lattice corners) of every face's border cells
+end
+function SeamOracle(grid)
+    c1 = Structured._lattice_corners(grid, 1, 1, 1)
+    border = Tuple{Int,typeof(c1)}[]
+    for f in 1:Structured.nfaces(grid)
+        ni, nj = Structured.facesize(grid, f)
+        for i in 1:ni, j in (1, nj)
+            push!(border, (Structured.faceposition(grid, f, i, j), Structured._lattice_corners(grid, f, i, j)))
+        end
+        for j in 2:nj-1, i in (1, ni)
+            push!(border, (Structured.faceposition(grid, f, i, j), Structured._lattice_corners(grid, f, i, j)))
+        end
+    end
+    return SeamOracle(border)
+end
+# every candidate (position, corners) for cell (f, i, j): its in-face block, then the borders
+function _candidates(o::SeamOracle, grid, f, i, j)
+    ni, nj = Structured.facesize(grid, f)
+    block = [(Structured.faceposition(grid, f, i2, j2), Structured._lattice_corners(grid, f, i2, j2))
+             for i2 in max(1, i - 1):min(ni, i + 1), j2 in max(1, j - 1):min(nj, j + 1)]
+    return Iterators.flatten((vec(block), o.border))
+end
+_holds(c, p) = any(q -> GrI._near(q, p), c)
+# the cell's sides as (start, end), skipping collapsed ones
+_sides(c) = ((c[s], c[mod1(s + 1, 4)]) for s in 1:4 if !GrI._near(c[s], c[mod1(s + 1, 4)]))
+_hasside(c, a, b) = any(((x, y),) -> (GrI._near(x, a) && GrI._near(y, b)) || (GrI._near(x, b) && GrI._near(y, a)), _sides(c))
+function _oracle_edge(o, grid, k, f, i, j, c)
+    out = Set{Int}()
+    for (a, b) in _sides(c), (q, cq) in _candidates(o, grid, f, i, j)
+        q != k && _hasside(cq, a, b) && push!(out, q)
+    end
+    return out
+end
+function _oracle_vertex(o, grid, k, f, i, j, c)
+    out = Set{Int}()
+    for (q, cq) in _candidates(o, grid, f, i, j)
+        q != k && any(p -> _holds(cq, p), c) && push!(out, q)
+    end
+    return out
+end
+_oracle_fan(o, grid, f, i, j, p) = Set{Int}(q for (q, cq) in _candidates(o, grid, f, i, j) if _holds(cq, p))
+
+function check_seams!(rep, grid, S)
+    F = :neighbors
+    o = try
+        SeamOracle(grid)
+    catch e
+        return law!(rep, F, "structured seams: shared-vertex oracle", false, "threw: " * first(sprint(showerror, e), 200))
+    end
+    # every cell on a small grid, else the sampled cells plus border cells spread along the borders
+    cells = ncells(grid) <= 2_000 ? collect(1:ncells(grid)) :
+        unique!(vcat(S[1:min(end, 16)], [o.border[k][1] for k in round.(Int, range(1, length(o.border); length=32))]))
+    guarded!(rep, F, "structured seams: Edge and Vertex neighbours equal the shared-vertex oracle") do
+        bad = Int[]
+        for k in cells
+            f, i, j = Structured.facecell(grid, k)
+            c = Structured._lattice_corners(grid, f, i, j)
+            Set(_nbrs(grid, k, Edge())) == _oracle_edge(o, grid, k, f, i, j, c) || push!(bad, k)
+            Set(_nbrs(grid, k, Vertex())) == _oracle_vertex(o, grid, k, f, i, j, c) || push!(bad, k)
+        end
+        isempty(bad), "$(length(bad)) of $(length(cells)) cells, e.g. $(first(bad, 5))"
+    end
+    guarded!(rep, F, "structured seams: facecross lands on the side holding both points of the side, and crosses back") do
+        bad = Int[]; seams = 0
+        for k in cells
+            f, i, j = Structured.facecell(grid, k)
+            ni, nj = Structured.facesize(grid, f)
+            c = Structured._lattice_corners(grid, f, i, j)
+            for s in 1:4
+                ((s == 1 && j == 1) || (s == 2 && i == ni) || (s == 3 && j == nj) || (s == 4 && i == 1)) || continue
+                x = Structured.facecross(grid, f, i, j, s)
+                x === nothing && continue
+                seams += 1
+                f2, i2, j2, s2 = x
+                cq = Structured._lattice_corners(grid, f2, i2, j2)
+                # the landing side runs the seam the other way: corner s is corner s2+1 across, corner s+1 is corner s2
+                ok = 1 <= s2 <= 4 && _hasside(cq, c[s], c[mod1(s + 1, 4)]) &&
+                     GrI._near(cq[mod1(s2 + 1, 4)], c[s]) && GrI._near(cq[s2], c[mod1(s + 1, 4)]) &&
+                     Structured.facecross(grid, f2, i2, j2, s2) == (f, i, j, s)
+                ok || push!(bad, k)
+            end
+        end
+        metric!(rep, "seam crossings checked", seams)
+        isempty(bad), "$(length(bad)) cells, e.g. $(first(bad, 5))"
+    end
+    guarded!(rep, F, "structured seams: vertex_cells at every corner equals the shared-vertex oracle") do
+        bad = Int[]
+        for k in cells
+            f, i, j = Structured.facecell(grid, k)
+            cs = GrI.cell_corners(grid, k)
+            for t in 1:length(cs)
+                key = GrI.vertex_key(grid, k, t)
+                fan = collect(GrI.vertex_cells(grid, key))
+                ok = Set(fan) == _oracle_fan(o, grid, f, i, j, cs[t]) && allunique(fan) &&
+                     key.cell == minimum(fan) && GrI.vertex_key(grid, key.cell, key.corner) == key
+                ok || push!(bad, k)
+            end
+        end
+        isempty(bad), "$(length(bad)) cells, e.g. $(first(bad, 5))"
+    end
+end
+_nbrs(grid, k, conn) = collect(neighbors(grid, k; connectivity=conn))
 
 # ------------------------------------------------------------------ dual
 function check_dual!(rep, grid, m, S)
