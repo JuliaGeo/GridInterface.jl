@@ -54,6 +54,9 @@ export nfaces, facesize, facevertex, faceposition, facecell
 export hasfaceaxes, faceaxes, facecoords, faceperiod, facelocalindex, facecolumnmajor
 export facecross, facefan
 export blockextent
+# A provider whose storage tiles are irregular (a DiskArrays raster) builds its
+# own `chunks` from these, and keeps O(1) chunk extents and subtrees.
+export TileIndices
 export FaceSeams, seamcross, MaskedCursor
 export CellBasedGrid, RegularGrid, ExplicitPolygonGrid
 
