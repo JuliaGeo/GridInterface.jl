@@ -12,8 +12,8 @@
 
 The quadtree over the cell block `irange × jrange` (the whole face by
 default) of face `face`: CR's `TopDownQuadtreeCursor` on the face hooks. A
-node's extent is its block's bounding box or cap from the block's perimeter
-vertices; leaves hold at most `leafsize[1] × leafsize[2]` cells and emit
+node's extent is [`blockextent`](@ref) of its block (by default the bounding
+box or cap from the block's perimeter vertices); leaves hold at most `leafsize[1] × leafsize[2]` cells and emit
 `grid`'s positions. `split_weight` is the block's cell count,
 `subtree_indices` its positions in leaf order and [`block_indices`](@ref)
 the same positions as a lazy ascending block.
@@ -85,7 +85,7 @@ function STI.getchild(q::TopDownQuadtreeCursor, i::Int)
 end
 STI.getchild(q::TopDownQuadtreeCursor) = (STI.getchild(q, i) for i in 1:STI.nchild(q))
 
-STI.node_extent(q::TopDownQuadtreeCursor) = _blockextent(best_manifold(q.grid), q.grid, q.face, q.irange, q.jrange)
+STI.node_extent(q::TopDownQuadtreeCursor) = blockextent(q.grid, q.face, q.irange, q.jrange)
 
 @inline _emit(q::TopDownQuadtreeCursor{G,false}, i, j) where {G} = faceposition(q.grid, q.face, i, j)
 @inline _emit(q::TopDownQuadtreeCursor{G,true}, i, j) where {G} = (i - q.i0 + 1) + (j - q.j0) * q.ni
@@ -94,7 +94,7 @@ STI.node_extent(q::TopDownQuadtreeCursor) = _blockextent(best_manifold(q.grid), 
     a, b = divrem(k - 1, length(q.irange))
     i = first(q.irange) + b
     j = first(q.jrange) + a
-    return (_emit(q, i, j), _cellextent(best_manifold(q.grid), q.grid, q.face, i, j))
+    return (_emit(q, i, j), blockextent(q.grid, q.face, i:i, j:j))
 end
 
 """

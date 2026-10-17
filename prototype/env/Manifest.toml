@@ -107,10 +107,10 @@ uuid = "e66e0078-7015-5450-92f7-15fbd957f2ae"
 version = "1.5.5+2"
 
 [[deps.ConservativeRegridding]]
-deps = ["ChunkSplitters", "ConstructionBase", "DocStringExtensions", "Extents", "GeoInterface", "GeometryOps", "GeometryOpsCore", "LinearAlgebra", "ProgressMeter", "SciMLPublic", "SmallCollections", "SortTileRecursiveTree", "SparseArrays", "StableTasks", "StaticArrays"]
+deps = ["ChunkSplitters", "DocStringExtensions", "Extents", "GeoInterface", "GeometryOps", "GeometryOpsCore", "GridInterface", "LinearAlgebra", "ProgressMeter", "SciMLPublic", "SparseArrays", "SpatialTreeInterface", "StableTasks", "StaticArrays"]
 path = "/home/anshul/.julia/dev/geo/gridinterface/ConservativeRegridding.jl"
 uuid = "8e50ac2c-eb48-49bc-a402-07c87b949343"
-version = "0.2.16"
+version = "0.2.17"
 
     [deps.ConservativeRegridding.extensions]
     ConservativeRegriddingClimaCoreExt = "ClimaCore"
@@ -365,7 +365,7 @@ uuid = "05efe853-fabf-41c8-927e-7063c8b9f013"
 version = "0.1.12"
 
 [[deps.GlobalRegridding]]
-deps = ["ConservativeRegridding", "DimensionalData", "DiskArrays", "GeoInterface", "GeometryOps", "GeometryOpsCore", "Graphs", "SparseArrays", "StableTasks"]
+deps = ["ConservativeRegridding", "DimensionalData", "DiskArrays", "GeoInterface", "GeometryOps", "GeometryOpsCore", "Graphs", "GridInterface", "SparseArrays", "StableTasks"]
 path = "/home/anshul/.julia/dev/geo/gridinterface/DiscreteGlobalGrids.jl/lib/GlobalRegridding"
 uuid = "76847d5f-3a3e-4aa5-90cc-2a3a47dd1c11"
 version = "0.1.0"

@@ -10,6 +10,25 @@ maxleaf(t) = STI.isleaf(t) ? length(STI.child_indices_extents(t)) : maximum(maxl
 _usp(x, y, z) = (r = sqrt(x^2 + y^2 + z^2); UnitSphericalPoint(x / r, y / r, z / r))
 _sameptr(a, b) = all(abs.(a .- b) .< 1e-9)
 
+# A structured grid that counts the calls through the extent seam `blockextent`,
+# forwarding every face hook to the grid it wraps (a consumer with its own analytic
+# range extent, as GlobalRegridding's rasters, overrides this one function).
+struct CountingExtents{G} <: Structured.AbstractStructuredGrid
+    grid::G
+    calls::Base.RefValue{Int}
+end
+Structured.nfaces(g::CountingExtents) = Structured.nfaces(g.grid)
+Structured.facesize(g::CountingExtents, f) = Structured.facesize(g.grid, f)
+Structured.facevertex(g::CountingExtents, f, a, b) = Structured.facevertex(g.grid, f, a, b)
+Structured.faceposition(g::CountingExtents, f, i, j) = Structured.faceposition(g.grid, f, i, j)
+Structured.facecell(g::CountingExtents, k) = Structured.facecell(g.grid, k)
+GOC.best_manifold(g::CountingExtents) = GOC.best_manifold(g.grid)
+GrI.extent_is_expensive(g::CountingExtents) = GrI.extent_is_expensive(g.grid)
+function Structured.blockextent(g::CountingExtents, f, ir::UnitRange{Int}, jr::UnitRange{Int})
+    g.calls[] += 1
+    return Structured.blockextent(g.grid, f, ir, jr)
+end
+
 @testset "structured" begin
     rg = RegularGrid(collect(0.0:1.0:20.0), collect(0.0:1.0:10.0))
     lons = range(-180, 180; length=37); lats = range(-90, 90; length=19)
@@ -238,4 +257,17 @@ _sameptr(a, b) = all(abs.(a .- b) .< 1e-9)
     @test cellat(ep, (0.5, 0.5)) == 1 && sort(neighbors(ep, 10)) == [1, 2, 3, 9, 11, 17, 18, 19]     # touching (GeneralCells)
     rep = check_grid(ep; name="ExplicitPolygonGrid sheared 8x6")
     @test all(r -> r.status !== :fail || r.family === :performance, rep.results)
+
+    # blockextent is the one extent seam: the cursor's node extents, its leaf entries and
+    # cell_extent all come through it, and a 1x1 block is the cell's extent
+    base = RegularGrid(collect(0.0:1.0:8.0), collect(0.0:1.0:4.0))
+    g = CountingExtents(base, Ref(0))
+    t = Structured.TopDownQuadtreeCursor(g, 1; leafsize=(2, 2))
+    @test STI.node_extent(t) == STI.node_extent(Structured.TopDownQuadtreeCursor(base, 1; leafsize=(2, 2)))
+    @test g.calls[] == 1
+    @test cell_extent(g, 5) == cell_extent(base, 5) && g.calls[] == 2
+    @test walk(t) == walk(Structured.TopDownQuadtreeCursor(base, 1; leafsize=(2, 2)))
+    @test g.calls[] == 2 + ncells(base)                    # every leaf cell's extent came through the seam
+    @test blockextent(base, 1, 3:3, 2:2) == cell_extent(base, faceposition(base, 1, 3, 2))
+    @test blockextent(base, 1, 1:8, 1:4) == STI.node_extent(treeify(base))
 end

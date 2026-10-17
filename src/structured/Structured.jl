@@ -17,7 +17,9 @@ Faces with separable coordinates (a raster, lon/lat) add the axis hooks
 [`faceperiod`](@ref), [`facelocalindex`](@ref)) and get O(1) point location.
 Seams (a periodic axis, the edges of a cubed sphere) are declared by
 arithmetic through [`facecross`](@ref); [`facefan`](@ref) covers the
-vertices the walk across seams cannot reach (a lon/lat pole).
+vertices the walk across seams cannot reach (a lon/lat pole). A provider
+with a closed-form block extent overrides [`blockextent`](@ref), which every
+derived extent (tree nodes, leaf cells, tiles) reads.
 
 The three concrete grids ([`CellBasedGrid`](@ref), [`RegularGrid`](@ref),
 [`ExplicitPolygonGrid`](@ref)) and the quadtree
@@ -51,6 +53,7 @@ export AbstractStructuredGrid, isstructured
 export nfaces, facesize, facevertex, faceposition, facecell
 export hasfaceaxes, faceaxes, facecoords, faceperiod, facelocalindex, facecolumnmajor
 export facecross, facefan
+export blockextent
 export FaceSeams, seamcross, MaskedCursor
 export CellBasedGrid, RegularGrid, ExplicitPolygonGrid
 

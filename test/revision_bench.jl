@@ -6,7 +6,7 @@ const PROTO = joinpath(@__DIR__, "..", "prototype")
 using DiscreteGlobalGrids
 import DiscreteGlobalGrids as DGG
 using GridInterface: cell_extent, cellat, Intersects, Within, Contains   # DGG exports its own (a lon/lat box, a typed id, DE9IM predicates)
-include(joinpath(PROTO, "adapters", "CRAdapter.jl")); using .CRAdapter
+import ConservativeRegridding as CR          # its engine takes GridInterface grids: `asgrid`, `treeify(grid; leaf_capacity = ForSweeps())`
 import Extents, GeometryOps as GO, GeometryOpsCore as GOC
 using GeometryOps.UnitSpherical: UnitSphericalPoint
 const STI = GrI.STI
@@ -73,16 +73,16 @@ println("ncells L1 = ", ncells(cg), "; root index built once in ", fmt(t_ri), ";
     "); without the index the root fan-out alone scans 64,800 root extents in ", fmt(t_scan))
 println("treeify(cg) (provider tree wins): ", nameof(typeof(treeify(cg))), "; chunks(cg): ", length(chunks(cg)), " (one per 1° tile)")
 
-section("D. split_weight through every wrapper and the CR bridge")
+section("D. split_weight through every wrapper and the CR engine's tree")
 g6 = GrI.levelgrid(hp, 6)
 for (name, tr) in (("DGG cursor", treeify(g6)), ("generic cursor", GrI.hierarchy_tree(g6)))
     gt = GridAndTree(g6, tr)
     println(rpad(name, 16), "split_weight: tree ", GrI.split_weight(tr), ", GridAndTree ", GrI.split_weight(gt),
-        ", CRTree ", Trees.split_weight(cr_tree(gt)), " (ncells ", ncells(g6), ")")
+        ", CR engine ", GrI.split_weight(GrI.treeify(gt; leaf_capacity = GrI.ForSweeps())), " (ncells ", ncells(g6), ")")
 end
-import Healpix; adapt_healpix!(Healpix)
-hm = Healpix.HealpixMap{Float64,Healpix.RingOrder}(16)
-println("HealpixMap nside 16 via the bridge: ", Trees.split_weight(cr_tree(hm)), " (ncells ", ncells(hm), "; round one: 1)")
+import Healpix
+hm = CR.asgrid(Healpix.HealpixMap{Float64,Healpix.RingOrder}(16))
+println("HealpixMap nside 16 as CR's grid: ", GrI.split_weight(GrI.treeify(hm; leaf_capacity = GrI.ForSweeps())), " (ncells ", ncells(hm), "; round one: 1)")
 
 section("E. chunks: lazy storage partitions and cheap extents")
 for l in (8, 12)

@@ -1,18 +1,18 @@
 # GridInterface.jl prototype environment (revision 2)
 
-`prototype/env` develops, by path, GridInterface (this package), its
-`lib/SpatialTreeInterfaceShim` and `lib/GridInterfaceConformance`,
-ConservativeRegridding (CR), GlobalRegridding and DiscreteGlobalGrids (DGG),
-and adds GeometryOps, GeometryOpsCore, Extents, GeoInterface, Healpix,
-BenchmarkTools and Test. DGG is a GridInterface provider itself (its grid verbs
-are GridInterface's bindings, its cursors are GridInterface trees); what makes
-CR's grids GridInterface grids lives in `prototype/adapters/`.
+`prototype/env` develops, by path, GridInterface (this package) and its
+`lib/GridInterfaceConformance`, ConservativeRegridding (CR), GlobalRegridding
+and DiscreteGlobalGrids (DGG), and adds GeometryOps, GeometryOpsCore, Extents,
+GeoInterface, Healpix, BenchmarkTools and Test. DGG is a GridInterface provider
+itself (its grid verbs are GridInterface's bindings, its cursors are
+GridInterface trees); CR's engine regrids GridInterface grids directly (its own
+`CellBasedGrid`, `RegularGrid`, `ExplicitPolygonGrid` are
+`GridInterface.Structured` grids, and `CR.Regridder(dst, src)` takes any grid).
 
 | file | what it does |
 |---|---|
 | `setup_env.jl` | (re)creates `env/` (run once) |
-| `adapters/CRAdapter.jl` | (a) CR's curvilinear grids as their `Structured` twins; (b) `CRTree`, the bridge that lets `CR.Regridder` consume any `GridAndTree` (the climate grids and `Healpix.HealpixMap` are providers inside CR's extensions since Phase 6; `ConservativeRegriddingTestHelpers.grid_of` names them) |
-| `conformance.jl` | conformance on every DGG grid and every adapted CR grid (about 3 min) |
+| `conformance.jl` | conformance on every DGG grid and every CR grid (about 3 min) |
 | `bench.jl` | round-one performance laws and regrid parity (about 6 min) |
 | `../test/revision_bench.jl` | revision benchmarks: analytic vertices, root index, split_weight, lazy chunks, halo, queries, four-method regrid |
 
@@ -25,7 +25,7 @@ using GridInterface, GridInterfaceConformance
 import GridInterface as GrI
 using DiscreteGlobalGrids; import DiscreteGlobalGrids as DGG
 using GridInterface: cell_extent, cellat   # DGG exports its own (a lon/lat box, a typed id)
-include("/home/anshul/geo/gridinterface/GridInterface.jl/prototype/adapters/CRAdapter.jl"); using .CRAdapter
+import ConservativeRegridding as CR; using GridInterface.Structured
 import Healpix; HealpixMapGrid = Base.get_extension(CR, :ConservativeRegriddingHealpixExt).HealpixMapGrid   # CR's own HealpixMap provider
 import Extents, GeometryOps as GO, GeometryOpsCore as GOC
 ```
@@ -38,7 +38,7 @@ geometric neighbours, vertex merge, query predicates) live in
 
 - **Required set is four methods**: `ncells`, `best_manifold`, `cellshape`, and `cell_boundary` (single ring) or `cell_geometry`. Such a grid passes `check_grid` and regrids through CR (`test/grids.jl`: `MinLonLat`).
 - **Spherical types are enforced**: on a `Spherical` manifold points are `UnitSphericalPoint` and extents `SphericalCap`; the core refuses anything else with an `ArgumentError` naming `GO.UnitSphereFromGeographic()`, and conformance fails it first.
-- **Engines take a grid paired with a tree** (`GridAndTree`). `split_weight` forwards through every wrapper and the CR bridge. A provider's `treeify` wins (DGG grids use DGG's cursors); the generic `hierarchy_tree` is the default for other level grids.
+- **Engines take grids** (CR's `Regridder(dst, src)` calls `treeify(grid; leaf_capacity = ForSweeps())`, `ncells`, `cell_geometry`; the areas are `GeometryOps.area` of the geometries); a grid paired with a tree you already have is `GridAndTree`. `split_weight` forwards through every wrapper. A provider's `treeify` wins (DGG grids use DGG's cursors); the generic `hierarchy_tree` is the default for other level grids.
 - **Neighbours**: disc `neighbors(g, i, k)`, `maxneighbors(g, k, conn)`, `maxring`; on subsets the plain form is clipped (local), `Index(Local())` is unclipped with `OUTSIDE` (0), `Index(Global())` gives complete-grid positions. `CounterClockwise` now promises alignment: Edge neighbour k lies across edge (corner k, corner k+1).
 - **Collections**: local / parent (`parentpositions`) / complete (`globalindex`) spaces; `union`, `intersect`, `setdiff`, `grow`; `cellsat`; `query(g, Intersects|Within|Contains|CentroidIn(region))`.
 - **Dual**: vertices are points where ≥ 3 cells meet (or boundary corners); `cell_vertices` ⊆ `cell_corners`; `vertex_isopen`, `dual_ring_cells`; typed `VertexKey`s with derived dense numbering; HEALPix vertices are analytic.
@@ -67,7 +67,7 @@ cell_corners(g, 17)                      # the 4 true corners (default: the ring
 buf = UnitSphericalPoint{Float64}[]; cell_boundary!(buf, g, 17)   # reuse a buffer
 cellsize(g), isglobal(g), cell_geometry_is_expensive(g)
 p = cell_centroid(g, 17); cellat(g, p)   # 17, analytic, 0 bytes
-ll = lonlat_grid(36, 18)                 # CR CellBasedGrid on the sphere
+ll = CR.CellBasedGrid(GOC.Spherical(), [GO.UnitSphereFromGeographic()((lo, la)) for lo in -180:10:180, la in -90:10:90])   # CR's CellBasedGrid (a Structured grid)
 cellat(ll, cell_centroid(ll, 100))       # 100, descending CR's quadtree cursor (the provider's tree) per call
 cellsat(ll, cell_corners(ll, 100)[3])    # every cell containing a point (4 at a corner)
 ```
@@ -102,7 +102,7 @@ ch = chunks(levelgrid(hp, 8))            # lazy: 192 chunks of 4096 cells, 0 byt
 chunkat(ch, 300_000), grid_extent(ch[5]) # O(1); a cap from the chunk's root
 chunks(levelgrid(hp, 8), 2)              # choose the level
 chunks(subset(levelgrid(hp, 8), 1000:90_000), 3)   # chunks of a subset: windows
-tc = chunks(lonlat_grid(1440, 720))      # CR raster: TileChunks of TileIndices subsets
+tc = chunks(CR.RegularGrid(GOC.Spherical(), collect(-180.0:0.25:180.0), collect(-90.0:0.25:90.0)))   # CR raster: TileChunks of TileIndices subsets
 subtree(parent(tc[3]), tc[3]), treeify(tc[3])      # O(1) quadtree cursors
 ```
 
@@ -149,10 +149,10 @@ rows, cols = aggregation_pairs(mls)      # behaviour 2 (direct) is Regridder(dst
 
 ```julia
 dst = levelgrid(DGG.IGeo7System(), 3)
-R1 = CR.Regridder(dst, levelgrid(hp, 3); threaded=false)                 # DGG's own path
-R2 = regridder(dst, GridAndTree(levelgrid(hp, 3), GrI.hierarchy_tree(levelgrid(hp, 3))); threaded=false)
-R1.intersections == R2.intersections     # true: the generic cursor through the bridge
-R3 = regridder(dst, mls; threaded=false) # a multi-level set as a source (direct form)
+R1 = CR.Regridder(dst, levelgrid(hp, 3); threaded=false)                 # grids straight in: DGG's cursors (the provider's treeify)
+R2 = CR.Regridder(dst, GridAndTree(levelgrid(hp, 3), GrI.hierarchy_tree(levelgrid(hp, 3))); threaded=false)
+R1.intersections == R2.intersections     # true: the generic cursor gives the same weights
+R3 = CR.Regridder(dst, mls; threaded=false)  # a multi-level set as a source (direct form)
 ```
 
 Mind the radius: the manifold's radius is the grid's area unit. DGG grids use

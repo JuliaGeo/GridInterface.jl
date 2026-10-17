@@ -6,9 +6,18 @@ import GridInterface as GrI, Extents
 import GeometryOps as GO, GeometryOpsCore as GOC, GeoInterface as GI
 using DiscreteGlobalGrids
 import DiscreteGlobalGrids as DGG
-include(joinpath(@__DIR__, "adapters", "CRAdapter.jl")); using .CRAdapter
+import ConservativeRegridding as CR
+using GridInterface.Structured
 import Healpix
 const HPExt = Base.get_extension(CR, :ConservativeRegriddingHealpixExt)      # HealpixMapGrid: CR's own provider
+
+"CR's standard global lon/lat test grid as a `Structured` grid with its seams declared (what `CR.Regridder` builds from the corners)."
+function lonlat_grid(nlon, nlat; manifold=GOC.Spherical(), cellbased=true)
+    lons = range(-180, 180; length=nlon + 1); lats = range(-90, 90; length=nlat + 1)
+    seams = GrI.iscurved(manifold) ? (; periodic=(true, false), collapsed=(true, true)) : (; periodic=(false, false), collapsed=(false, false))
+    cellbased || return Structured.RegularGrid(manifold, collect(lons), collect(lats); seams...)
+    return Structured.CellBasedGrid(manifold, [GO.UnitSphereFromGeographic()((lo, la)) for lo in lons, la in lats]; seams...)
+end
 
 report(rep, t) = (print_report(rep); println("  (", round(t; digits=1), " s)"); flush(stdout))
 
@@ -49,15 +58,15 @@ for (name, sys) in (("HEALPix", DGG.HEALPixSystem()), ("IGeo7", DGG.IGeo7System(
     t = @elapsed rep = check_multilevel(set; name="$name MultiOrderCoverage Europe, level ≤ 6")
     report(rep, t)
 end
-# CR grids, through their Structured twins (what any consumer given a CR grid builds)
+# CR's grids (GridInterface.Structured grids since Phase 7: what `CR.Regridder` builds from bare corners, axes or polygons)
 warp = [GO.UnitSphereFromGeographic()((lo + 6sind(3la), la + 4sind(2lo))) for lo in range(-60, 60; length=25), la in range(-40, 50; length=19)]
 polys = [GI.Polygon([[(i + 0.2j, j), (i + 1 + 0.2j, j), (i + 1.2 + 0.2j, j + 1), (i + 0.2 + 0.2j, j + 1), (i + 0.2j, j)]]) for i in 0:7, j in 0:5]
 for (name, g) in (
         ("CR CellBasedGrid lon/lat 36x18 (Spherical)", lonlat_grid(36, 18)),
-        ("CR CellBasedGrid warped curvilinear 24x18 (Spherical)", structured(Trees.CellBasedGrid(GOC.Spherical(), warp))),
-        ("CR RegularGrid 20x10 (Planar)", structured(Trees.RegularGrid(GOC.Planar(), collect(0.0:1.0:20.0), collect(0.0:1.0:10.0)))),
+        ("CR CellBasedGrid warped curvilinear 24x18 (Spherical)", CR.CellBasedGrid(GOC.Spherical(), warp)),
+        ("CR RegularGrid 20x10 (Planar)", CR.RegularGrid(GOC.Planar(), collect(0.0:1.0:20.0), collect(0.0:1.0:10.0))),
         ("CR RegularGrid lon/lat 36x18 (Spherical)", lonlat_grid(36, 18; cellbased=false)),
-        ("CR ExplicitPolygonGrid sheared 8x6 (Planar)", structured(Trees.ExplicitPolygonGrid(GOC.Planar(), polys))),
+        ("CR ExplicitPolygonGrid sheared 8x6 (Planar)", CR.ExplicitPolygonGrid(GOC.Planar(), polys)),
         ("Healpix.HealpixMap nside 4 (CR's HealpixMapGrid)", HPExt.HealpixMapGrid(Healpix.HealpixMap{Float64,Healpix.RingOrder}(4))))
     t = @elapsed rep = check_grid(g; name)
     report(rep, t)

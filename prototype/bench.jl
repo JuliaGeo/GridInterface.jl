@@ -5,7 +5,8 @@ import GridInterface as GrI
 using DiscreteGlobalGrids
 import DiscreteGlobalGrids as DGG
 using GridInterface: cell_extent, cellat   # DGG exports its own (a lon/lat box, a typed id)
-include(joinpath(@__DIR__, "adapters", "CRAdapter.jl")); using .CRAdapter
+import ConservativeRegridding as CR                       # regrids GridInterface grids directly (Phase 7)
+using GridInterface.Structured
 import Extents, GeometryOps as GO, GeometryOpsCore as GOC
 const FB = DGG.Fallbacks
 
@@ -18,6 +19,18 @@ sweep_extent(g) = (s = 0.0; for i in 1:ncells(g); s += cell_extent(g, i).radius;
 sweep_identity(g) = (s = 0; for i in 1:ncells(g); s += localindex(g, cellindex(g, i))::Int; end; s)
 direct_centroid(g) = (s = 0.0; for i in 1:DGG.ncells(g); s += DGG.cell_centroid(g, DGG.cellindex(g, i))[1]; end; s)
 direct_set_centroid(set) = (s = 0.0; sys = set.system; for c in set.cells; s += DGG.cell_centroid(DGG.levelgrid(sys, DGG.level(c)), c)[1]; end; s)
+
+"CR's standard global lon/lat test grid: the corner matrix (or the axes) as a `Structured` grid with its seams declared."
+function lonlat_grid(nlon, nlat; manifold=GOC.Spherical(), cellbased=true)
+    lons = range(-180, 180; length=nlon + 1); lats = range(-90, 90; length=nlat + 1)
+    seams = GrI.iscurved(manifold) ? (; periodic=(true, false), collapsed=(true, true)) : (; periodic=(false, false), collapsed=(false, false))
+    cellbased || return Structured.RegularGrid(manifold, collect(lons), collect(lats); seams...)
+    return Structured.CellBasedGrid(manifold, [GO.UnitSphereFromGeographic()((lo, la)) for lo in lons, la in lats]; seams...)
+end
+"The same corners as a bare matrix: what `CR.Regridder` turns into a `CellBasedGrid` itself."
+lonlat_points(nlon, nlat) = [GO.UnitSphereFromGeographic()((lo, la)) for lo in range(-180, 180; length=nlon + 1), la in range(-90, 90; length=nlat + 1)]
+# a grid paired with GridInterface's generic R-tree over its cell extents, instead of its own cursor
+rtree(g) = GridAndTree(g, GrI.fallback_treeify(GO.best_manifold(g), g, 16))
 
 section("1. per-cell geometry: level grids and a multi-level set (type stability, allocation)")
 hp = DGG.HEALPixSystem()
@@ -79,16 +92,16 @@ let g = mls, p = cell_centroid(mls, 100), gt = GridAndTree(mls, GrI.fallback_tre
     println("multi-level set fallback cellat via hierarchy cursor ", fmt(t), "; via cached R-tree (GridAndTree) ", fmt(t2))
 end
 
-section("4. regrid parity: generic cursor through CR's Regridder vs DGG's own path")
+section("4. regrid parity: DGG's own cursors through CR's Regridder vs the generic R-tree")
 function parity(name, dst, src)
-    R_dgg = CR.Regridder(dst, src; threaded=false)                      # DGG's HierarchicalGridCursor path
-    R_gi = CR.Regridder(cr_tree(dst), cr_tree(src); threaded=false)     # GridInterface generic cursor
+    R_dgg = CR.Regridder(dst, src; threaded=false)                      # DGG's HierarchicalGridCursor (the provider's treeify)
+    R_gi = CR.Regridder(rtree(dst), rtree(src); threaded=false)         # GridInterface's generic R-tree
     t_dgg = @elapsed CR.Regridder(dst, src; threaded=false)
-    t_gi = @elapsed CR.Regridder(cr_tree(dst), cr_tree(src); threaded=false)
+    t_gi = @elapsed CR.Regridder(rtree(dst), rtree(src); threaded=false)
     A, B = R_dgg.intersections, R_gi.intersections
     println(rpad(name, 34), size(A), " nnz ", nnz(A), "  identical: ", A == B, "  max|Δ| ", maximum(abs.(A - B); init=0.0),
         "  areas identical: ", R_dgg.dst_areas == R_gi.dst_areas && R_dgg.src_areas == R_gi.src_areas,
-        "  time DGG ", fmt(t_dgg), " / GI ", fmt(t_gi))
+        "  time cursor ", fmt(t_dgg), " / R-tree ", fmt(t_gi))
     return A == B
 end
 parity("HEALPix 5 ← IGeo7 4", GrI.levelgrid(hp, 5), GrI.levelgrid(DGG.IGeo7System(), 4))
@@ -99,11 +112,11 @@ parity("IGeo7 4 ← HEALPix partial grid", GrI.levelgrid(DGG.IGeo7System(), 4), 
 
 section("5. multi-level set straight into CR's Regridder")
 dst = GrI.levelgrid(DGG.IGeo7System(), 5)
-R_set = CR.Regridder(cr_tree(dst), cr_tree(mls); threaded=false)
-t_set = @elapsed CR.Regridder(cr_tree(dst), cr_tree(mls); threaded=false)
+R_set = CR.Regridder(dst, mls; threaded=false)
+t_set = @elapsed CR.Regridder(dst, mls; threaded=false)
 rt = GrI.fallback_treeify(GO.Spherical(radius=1.0), mls, 16)
-R_rt = CR.Regridder(cr_tree(dst), cr_tree(GridAndTree(mls, rt)); threaded=false)
-t_rt = @elapsed CR.Regridder(cr_tree(dst), cr_tree(GridAndTree(mls, rt)); threaded=false)
+R_rt = CR.Regridder(dst, GridAndTree(mls, rt); threaded=false)
+t_rt = @elapsed CR.Regridder(dst, GridAndTree(mls, rt); threaded=false)
 println("IGeo7 5 ← HEALPix multi-level set: ", size(R_set.intersections), " cursor ", fmt(t_set), "; R-tree ", fmt(t_rt),
     "; identical to R-tree: ", R_set.intersections == R_rt.intersections)
 expanded = DGG.PartialGrid(DGG.CellVector(set))
@@ -116,34 +129,33 @@ P = sparse(colpos, cols, 1.0, ncells(expanded), ncells(mls))
 gap = maximum(abs.(R_exp.intersections * P - R_set.intersections)) / maximum(R_set.intersections)
 println("today's expansion path: ", size(R_exp.intersections), " in ", fmt(t_exp), "; R_expanded·P vs R_set max rel gap ", gap)
 
-section("6. regrid parity: CR grids through their Structured twins vs CR's own path (bit-identical)")
-function cr_parity(name, dst_cr, src_cr)
-    R_cr = CR.Regridder(dst_cr, src_cr; threaded=false)                                        # CR's own grids and quadtree
-    R_gi = CR.Regridder(cr_tree(structured(dst_cr)), cr_tree(structured(src_cr)); threaded=false)   # the twins through the bridge
-    t_cr = @elapsed CR.Regridder(dst_cr, src_cr; threaded=false)
-    t_gi = @elapsed CR.Regridder(cr_tree(structured(dst_cr)), cr_tree(structured(src_cr)); threaded=false)
+section("6. regrid parity: CR's bare inputs vs the Structured grids they become (bit-identical)")
+function cr_parity(name, dst_bare, src_bare, dst_grid, src_grid)
+    R_cr = CR.Regridder(dst_bare, src_bare; threaded=false)                 # a corner matrix / axis pair: `asgrid` builds the grid
+    R_gi = CR.Regridder(dst_grid, src_grid; threaded=false)                 # the Structured grids built explicitly
+    t_cr = @elapsed CR.Regridder(dst_bare, src_bare; threaded=false)
+    t_gi = @elapsed CR.Regridder(dst_grid, src_grid; threaded=false)
     A, B = R_cr.intersections, R_gi.intersections
     same = A == B && R_cr.dst_areas == R_gi.dst_areas && R_cr.src_areas == R_gi.src_areas
     println(rpad(name, 50), size(A), " nnz ", nnz(A), "  bit-identical: ", same, "  max|Δ| ", maximum(abs.(A - B); init=0.0),
-        "  time CR ", fmt(t_cr), " / twins ", fmt(t_gi))
+        "  time bare ", fmt(t_cr), " / grids ", fmt(t_gi))
     return same
 end
-ll36 = cr_lonlat_grid(36, 18); ll72 = cr_lonlat_grid(72, 36)
-cr_parity("lon/lat 36×18 ← lon/lat 72×36 (CellBasedGrid)", ll36, ll72)
-# CR's own path cannot clip a spherical RegularGrid (its cells are lon/lat tuples); its twin has the
-# same geodesic quads as the CellBasedGrid of the same corners, so compare against CR on that.
-let rg = structured(cr_lonlat_grid(36, 18; cellbased=false))
-    R_cr = CR.Regridder(ll36, ll72; threaded=false)
-    R_gi = CR.Regridder(cr_tree(rg), cr_tree(structured(ll72)); threaded=false)
-    println(rpad("RegularGrid lon/lat 36×18 twin ← lon/lat 72×36", 50), size(R_gi.intersections), " nnz ", nnz(R_gi.intersections),
-        "  bit-identical to CR's CellBasedGrid 36×18: ", R_cr.intersections == R_gi.intersections && R_cr.dst_areas == R_gi.dst_areas)
+cr_parity("lon/lat 36×18 ← lon/lat 72×36 (CellBasedGrid)", lonlat_points(36, 18), lonlat_points(72, 36), lonlat_grid(36, 18), lonlat_grid(72, 36))
+# A spherical RegularGrid has the same geodesic quads as the CellBasedGrid of the same corners.
+let rg = lonlat_grid(36, 18; cellbased=false), ll72 = lonlat_grid(72, 36)
+    R_cr = CR.Regridder(lonlat_grid(36, 18), ll72; threaded=false)
+    R_gi = CR.Regridder(rg, ll72; threaded=false)
+    println(rpad("RegularGrid lon/lat 36×18 ← lon/lat 72×36", 50), size(R_gi.intersections), " nnz ", nnz(R_gi.intersections),
+        "  bit-identical to CellBasedGrid 36×18: ", R_cr.intersections == R_gi.intersections && R_cr.dst_areas == R_gi.dst_areas)
 end
-cr_parity("RegularGrid planar 20×10 ← RegularGrid planar 30×15",
-    Trees.RegularGrid(GOC.Planar(), collect(0.0:1.0:20.0), collect(0.0:1.0:10.0)),
-    Trees.RegularGrid(GOC.Planar(), collect(range(0.0, 20.0; length=31)), collect(range(0.0, 10.0; length=16))))
-let dst = GrI.levelgrid(hp, 3), ll36 = cr_lonlat_grid(36, 18; manifold=GOC.Spherical(; radius=1.0))   # DGG's unit sphere
-    R_cr = CR.Regridder(dst, ll36; threaded=false)
-    R_gi = CR.Regridder(cr_tree(dst), cr_tree(structured(ll36)); threaded=false)
+let xd = collect(0.0:1.0:20.0), yd = collect(0.0:1.0:10.0), xs = collect(range(0.0, 20.0; length=31)), ys = collect(range(0.0, 10.0; length=16))
+    cr_parity("RegularGrid planar 20×10 ← RegularGrid planar 30×15", (xd, yd), (xs, ys),
+        Structured.RegularGrid(GOC.Planar(), xd, yd), Structured.RegularGrid(GOC.Planar(), xs, ys))
+end
+let dst = GrI.levelgrid(hp, 3), m = GOC.Spherical(; radius=1.0)   # DGG's unit sphere
+    R_cr = CR.Regridder(m, dst, lonlat_points(36, 18); threaded=false)
+    R_gi = CR.Regridder(m, dst, lonlat_grid(36, 18; manifold=m); threaded=false)
     println(rpad("HEALPix L3 ← lon/lat 36×18 (CellBasedGrid)", 50), size(R_cr.intersections), " nnz ", nnz(R_cr.intersections),
         "  bit-identical: ", R_cr.intersections == R_gi.intersections && R_cr.src_areas == R_gi.src_areas)
 end

@@ -100,7 +100,7 @@ GrI.chunks(g::AbstractStructuredGrid) = TileChunks(g)
 GrI.chunks(g::AbstractStructuredGrid, tile::NTuple{2,Int}) = TileChunks(g, tile)
 
 # a tile's extent, its subtree in the grid and its own tree are the block's
-GrI.grid_extent(s::TileSubset) = (t = s.cells; _blockextent(best_manifold(t.grid), t.grid, t.face, t.ir, t.jr))
+GrI.grid_extent(s::TileSubset) = (t = s.cells; blockextent(t.grid, t.face, t.ir, t.jr))
 GrI.subtree(g::AbstractStructuredGrid, t::TileIndices) =
     TopDownQuadtreeCursor(g, t.face, t.ir, t.jr; leafsize=_leafsize(leaf_capacity(g, Balanced())))
 GrI.subtree(g::AbstractStructuredGrid, s::TileSubset) = subtree(g, s.cells)

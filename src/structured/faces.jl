@@ -240,7 +240,7 @@ end
 GrI.cellshape(::AbstractStructuredGrid) = ConvexCells()
 GrI.extent_is_expensive(::AbstractStructuredGrid) = true
 GrI.cell_extent(g::AbstractStructuredGrid, k::Integer) =
-    ((f, i, j) = _facecell(g, k); _cellextent(best_manifold(g), g, f, i, j))
+    ((f, i, j) = _facecell(g, k); blockextent(g, f, i:i, j:j))
 
 # Lazy walk of the border vertices of the point block [a0..a1] × [b0..b1] of
 # face f: west column, east column, then the interiors of the south and north
@@ -291,6 +291,23 @@ end
 _blockextent(m, g, f, ir, jr) = _blockextent_other(m, g, f, ir, jr)
 _blockextent_other(m, g, f, ir, jr) = iscurved(m) ? _blockextent(Spherical(), g, f, ir, jr) :
     _blockextent(Planar(), g, f, ir, jr)
+
+"""
+    blockextent(grid, f, ir::UnitRange{Int}, jr::UnitRange{Int})
+
+The extent of the cell block `ir × jr` of face `f`: an `Extents.Extent` box
+on the plane, a `SphericalCap` on a curved manifold, containing every cell of
+the block. The one override point for a provider whose block extents have a
+closed form (a geographic raster's analytic cap): the quadtree's
+`node_extent`, its leaf entries (`ir` and `jr` of length one),
+[`cell_extent`](@ref GridInterface.cell_extent) and a tile's `grid_extent`
+all read it. The default derives a block's extent from its perimeter vertices
+and a single cell's from its four corners (the private `_blockextent` and
+`_cellextent`, which a provider may also specialize per manifold).
+"""
+blockextent(g, f, ir::UnitRange{Int}, jr::UnitRange{Int}) =
+    (length(ir) == 1 && length(jr) == 1) ? _cellextent(best_manifold(g), g, f, first(ir), first(jr)) :
+    _blockextent(best_manifold(g), g, f, ir, jr)
 
 # a single cell: its four corners, no perimeter
 function _cellextent(m, g, f, i, j)
