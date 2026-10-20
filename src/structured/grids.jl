@@ -99,8 +99,8 @@ GrI.maxneighbors(g::CellBasedGrid, ::Vertex) = _vertexmaxneighbors(g.collapsed)
 One lattice face with separable axes: vertex `(a, b)` is `(x[a], y[b])` on
 the plane (`Planar()`, the default) or the unit-sphere point of longitude
 `x[a]` and latitude `y[b]` on `Spherical()`. Axes ascend. Point location is
-the axis floor; cell extents are four reads on the plane
-(`extent_is_expensive` is `false` there).
+the axis floor; block and cell extents are four reads on the plane (its
+quadtree's node extents are cheap there).
 
 `periodic` and `collapsed` (each an `NTuple{2,Bool}`, per axis) declare the
 seams: a periodic axis closes on itself (longitude spanning 360°), a
@@ -143,7 +143,6 @@ facecoords(g::RegularGrid, f, p) = iscurved(g.manifold) ? GeographicFromUnitSphe
 # longitude is periodic whatever the grid's span
 _axisperiod(m) = iscurved(m) ? (360.0, nothing) : (nothing, nothing)
 faceperiod(g::RegularGrid, f) = _axisperiod(g.manifold)
-GrI.extent_is_expensive(g::RegularGrid) = iscurved(g.manifold)
 # a spherical lon/lat grid spanning 360° × 180° covers the sphere
 GrI.isglobal(g::RegularGrid) = iscurved(g.manifold) &&
     last(g.x) - first(g.x) >= 360 && first(g.y) <= -90 && last(g.y) >= 90

@@ -238,7 +238,6 @@ function GrI.ncells(g::AbstractStructuredGrid)
     return n
 end
 GrI.cellshape(::AbstractStructuredGrid) = ConvexCells()
-GrI.extent_is_expensive(::AbstractStructuredGrid) = true
 GrI.cell_extent(g::AbstractStructuredGrid, k::Integer) =
     ((f, i, j) = _facecell(g, k); blockextent(g, f, i:i, j:j))
 

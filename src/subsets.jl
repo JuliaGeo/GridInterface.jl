@@ -80,7 +80,7 @@ gridrelation(::Subset) = ParentGrid()
 system(s::Subset) = system(s.parent)
 level(s::Subset) = level(s.parent)
 GOC.best_manifold(s::Subset) = best_manifold(s.parent)
-for f in (:cellshape, :tessellation, :extent_is_expensive, :location_is_analytic,
+for f in (:cellshape, :tessellation, :location_is_analytic,
           :neighbors_are_analytic, :cellindextypes, :edgekind, :cell_geometry_is_expensive)
     @eval $f(s::Subset) = $f(s.parent)
 end

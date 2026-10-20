@@ -190,6 +190,19 @@ function check_tree!(rep, grid, n, m, S, rng, full_tree_limit)
         ls = sort!(collect_leaves(subtree(grid, cells)))
         ls == cells, "expected $(length(cells)) got $(length(ls))"
     end
+    # `subtree` asks for the tree it restricts with an `Integer` stand-in,
+    # `SubtreeCapacity`, which the generic R-tree path answers with `nothing`. A
+    # provider method typed `n::Int` never sees it, so the provider's tree would
+    # be silently skipped for an R-tree over the cells.
+    guarded!(rep, F, "subtree restricts treeify(grid, n)'s own tree (its integer method takes any Integer)") do
+        cap = GrI.leaf_capacity(grid, GrI.Balanced())
+        t = treeify(grid, cap)
+        own = GrI.own_tree(grid, cap)
+        ok = own === nothing ? nameof(typeof(t)) === :RTree : typeof(own) == typeof(t)
+        ok, "treeify(grid, $cap) is a $(nameof(typeof(t))) but subtree restricts " *
+            (own === nothing ? "none (it builds an R-tree over the cells)" : string(nameof(typeof(own)))) *
+            ": type the provider's leaf size `n::Integer`, not `::Int`"
+    end
     if n <= full_tree_limit
         guarded!(rep, F, "subtree_indices(node) is the leaf walk, for the root and sampled nodes") do
             nodes = sample_nodes(rng, tree, 6)
@@ -528,6 +541,20 @@ function check_structured!(rep, grid, S, rng)
             end
         end
         isempty(bad), "cells $(first(bad, 5))"
+    end
+    # a face that declares lattice order has it: the restriction reads a block's
+    # positions as one run per row from that declaration alone
+    guarded!(rep, :identity, "structured: a facecolumnmajor face numbers i fastest, then j") do
+        bad = Tuple{Int,Int,Int}[]
+        for f in 1:nf
+            Structured.facecolumnmajor(grid, f) || continue
+            ni, nj = Structured.facesize(grid, f)
+            p0 = Structured.faceposition(grid, f, 1, 1)
+            for (i, j) in ((ni, 1), (1, nj), (min(2, ni), min(2, nj)), (rand(rng, 1:ni), rand(rng, 1:nj)))
+                Structured.faceposition(grid, f, i, j) == p0 + (i - 1) + (j - 1) * ni || push!(bad, (f, i, j))
+            end
+        end
+        isempty(bad), "cells $(first(bad, 5)) are not at their lattice-order position; answer facecolumnmajor(grid, f) = false"
     end
     axed = [f for f in 1:nf if Structured.hasfaceaxes(grid, f)]
     if isempty(axed)

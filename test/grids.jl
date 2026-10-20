@@ -179,7 +179,6 @@ GrI.level(g::QuadLevelGrid) = g.level
 GrI.ncells(g::QuadLevelGrid) = 1 << (2 * g.level)
 GOC.best_manifold(::QuadLevelGrid) = GOC.Planar()
 GrI.cellshape(::QuadLevelGrid) = GrI.ConvexCells()
-GrI.extent_is_expensive(::QuadLevelGrid) = false
 function GrI.cellindex(g::QuadLevelGrid, i::Integer)
     1 <= i <= GrI.ncells(g) || throw(BoundsError(g, i))
     return QuadCell(g.level, i - 1)

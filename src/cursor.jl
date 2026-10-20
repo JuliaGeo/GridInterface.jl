@@ -34,7 +34,6 @@ fr_keys(F::LevelFrontier) = Base.OneTo(F.n)
 @inline fr_id(F::LevelFrontier, k) = cellindex(F.grid, k)
 @inline fr_emit(F::LevelFrontier, k) = k
 @inline fr_extent(F::LevelFrontier, k) = cell_extent(F.grid, k)
-_fr_extent_is_expensive(F::LevelFrontier) = extent_is_expensive(F.grid)
 
 """
     SubsetFrontier(grid, sys, ref, keys, emitkeys)
@@ -59,7 +58,6 @@ fr_keys(F::SubsetFrontier) = F.keys
 @inline fr_emitted(F::SubsetFrontier{G,S,K,true}, ks::AbstractVector{Int}) where {G,S,K} = view(F.keys, ks)
 @inline fr_id(F::SubsetFrontier, k) = cellindex(F.grid, fr_emit(F, k))
 @inline fr_extent(F::SubsetFrontier, k) = cell_extent(F.grid, fr_emit(F, k))
-_fr_extent_is_expensive(F::SubsetFrontier) = extent_is_expensive(F.grid)
 
 fr_n(F) = length(fr_keys(F))
 fr_system(F) = F.sys
@@ -153,8 +151,13 @@ system cell with the contiguous window `lo:hi` of members beneath it, found by
 two binary searches over `descendant_range`. It stops at a cell when its window
 holds `<= bucket` members or exactly that cell. Requires `has_sorted_subtrees`.
 Building it is O(1).
+
+`S` is whether the node is synthetic (the root above the system's roots, or a
+root-index group): a type-level fact, because the two take their children
+from different containers (`rootcells`, the index's ids, `children`), and a
+cell node must not pay for that union.
 """
-struct HierarchyCursor{F,ID,E,RI}
+struct HierarchyCursor{F,ID,E,RI,S}
     fr::F
     top::Int        # first(levels(sys)); a node at level < top is synthetic (root or group)
     level::Int
@@ -171,18 +174,19 @@ function HierarchyCursor(fr::F; root=nothing, bucket::Integer=1) where {F}
     sys = fr_system(fr)
     top = first(levels(sys))
     E = Base.promote_op(fr_extent, F, Int)
-    ri = root === nothing ? root_index(sys) : nothing
     if root === nothing
+        ri = root_index(sys)
         id = first(rootcells(sys))
         gl = ri === nothing ? 0 : length(ri.exts) + 1
-        return HierarchyCursor{F,typeof(id),E,typeof(ri)}(fr, top, top - 1, id, 1, fr_n(fr), Int(bucket), ri, gl, 1)
+        return HierarchyCursor{F,typeof(id),E,typeof(ri),true}(fr, top, top - 1, id, 1, fr_n(fr), Int(bucket), ri, gl, 1)
     end
-    return HierarchyCursor{F,typeof(root),E,typeof(ri)}(fr, top, level(root), root, 1, fr_n(fr), Int(bucket), ri, 0, 0)
+    return HierarchyCursor{F,typeof(root),E,Nothing,false}(fr, top, level(root), root, 1, fr_n(fr), Int(bucket), nothing, 0, 0)
 end
 
 @inline _count(n::HierarchyCursor) = n.hi - n.lo + 1
-@inline _synthetic(n) = n.level < n.top
-@inline _isgroup(n::HierarchyCursor) = n.ri !== nothing && n.gl >= 1
+@inline _synthetic(::HierarchyCursor{F,ID,E,RI,S}) where {F,ID,E,RI,S} = S
+@inline _isgroup(n::HierarchyCursor{F,ID,E,RI,true}) where {F,ID,E,RI} = n.ri !== nothing && n.gl >= 1
+@inline _isgroup(::HierarchyCursor{F,ID,E,RI,false}) where {F,ID,E,RI} = false
 
 STI.isspatialtree(::Type{<:HierarchyCursor}) = true
 STI.node_extent_is_expensive(::Type{<:HierarchyCursor}) = true
@@ -209,6 +213,12 @@ function subtree_indices(n::HierarchyCursor)
     return out
 end
 
+# Emitted positions ascend with the window index in every frontier, so a
+# window's span is its ends; a root-index group keeps its parent's window,
+# still a bound over what its roots hold.
+position_span(n::HierarchyCursor) = fr_span(n.fr, n.lo, n.hi)
+fr_span(F, lo::Int, hi::Int) = lo <= hi ? (fr_emit(F, lo):fr_emit(F, hi)) : (1:0)
+
 function STI.isleaf(n::HierarchyCursor)
     k = _count(n)
     k <= 0 && return true
@@ -219,11 +229,12 @@ function STI.isleaf(n::HierarchyCursor)
 end
 
 # The ids children are taken from: rootcells at a flat synthetic root, the root
-# index's ids below a group, the system's children otherwise.
-function _child_ids(n::HierarchyCursor)
-    _isgroup(n) && return n.ri.ids
-    return _synthetic(n) ? rootcells(fr_system(n.fr)) : children(fr_system(n.fr), n.id)
-end
+# index's ids below a group (every synthetic node of an indexed system is one),
+# the system's children at a cell. One method per case, so that each infers
+# its own container.
+_child_ids(n::HierarchyCursor{F,ID,E,Nothing,true}) where {F,ID,E} = rootcells(fr_system(n.fr))
+_child_ids(n::HierarchyCursor{F,ID,E,<:RootIndex,true}) where {F,ID,E} = n.ri.ids
+_child_ids(n::HierarchyCursor{F,ID,E,RI,false}) where {F,ID,E,RI} = children(fr_system(n.fr), n.id)
 function _child_range(n::HierarchyCursor, ids)
     _isgroup(n) || return 1:length(ids)
     f = n.ri.fanout
@@ -234,7 +245,7 @@ function _child_range(n::HierarchyCursor, ids)
 end
 @inline function _kth_child(n::HierarchyCursor{F,ID,E,RI}, ids, k) where {F,ID,E,RI}
     if _isgroup(n) && n.gl >= 2
-        return HierarchyCursor{F,ID,E,RI}(n.fr, n.top, n.level, n.id, n.lo, n.hi, n.bucket, n.ri, n.gl - 1, k)
+        return HierarchyCursor{F,ID,E,RI,true}(n.fr, n.top, n.level, n.id, n.lo, n.hi, n.bucket, n.ri, n.gl - 1, k)
     end
     return _child(n, @inbounds ids[k])
 end
@@ -245,7 +256,7 @@ end
     ks = fr_keys(fr)
     lo = searchsortedfirst(ks, first(r), n.lo, n.hi, Base.Order.Forward)
     hi = searchsortedlast(ks, last(r), n.lo, n.hi, Base.Order.Forward)
-    return HierarchyCursor{F,ID,E,RI}(fr, n.top, n.level + 1, cid, lo, hi, n.bucket, n.ri, 0, 0)
+    return HierarchyCursor{F,ID,E,RI,false}(fr, n.top, n.level + 1, cid, lo, hi, n.bucket, n.ri, 0, 0)
 end
 _nonempty(n) = _count(n) > 0
 
@@ -296,13 +307,13 @@ Base.@propagate_inbounds function Base.getindex(e::LeafEntries, i::Int)
     return (fr_emit(e.fr, k), fr_extent(e.fr, k))
 end
 
-# Cheap extents stay lazy (no allocation). Expensive ones in a bucketed leaf
-# (the sweep shape) are built once per visit: CR's dual DFS carries a leaf's
-# entries while the opposing tree descends, and a lazy vector would recompute
-# every cap per opposing leaf. A one-cell leaf (the query shape) stays lazy.
+# A bucketed leaf (the sweep shape) builds its entries once per visit: the pair
+# search reads a leaf's entries once per opposing cell, so a lazy vector would
+# recompute every extent that many times. A one-cell leaf (the query shape)
+# stays lazy.
 function STI.child_indices_extents(n::HierarchyCursor{F,ID,E}) where {F,ID,E}
     entries = LeafEntries{F,E}(n.fr, n.lo, max(0, _count(n)))
-    return n.bucket > 1 && _fr_extent_is_expensive(n.fr) ? collect(entries) : entries
+    return n.bucket > 1 ? collect(entries) : entries
 end
 
 # --- the selection-mode cursor (systems without sorted subtrees) -------------
@@ -337,6 +348,7 @@ end
 
 STI.isspatialtree(::Type{<:SelectionCursor}) = true
 STI.node_extent_is_expensive(::Type{<:SelectionCursor}) = true
+@inline _synthetic(n::SelectionCursor) = n.level < n.top
 split_weight(n::SelectionCursor) = length(n.sel)
 # the selection order is the members' order, not the walk's: collect leaves in
 # traversal order (STI's contract), still without touching extents
@@ -348,6 +360,13 @@ function _sel_indices!(out, n::SelectionCursor)
         for c in _sel_children(n); _sel_indices!(out, c); end
     end
     return out
+end
+
+# the selection's emitted extrema: O(members), on the one tree that is O(n) anyway
+function position_span(n::SelectionCursor)
+    isempty(n.sel) && return 1:0
+    lo, hi = extrema(k -> fr_emit(n.fr, k), n.sel)
+    return lo:hi
 end
 
 function STI.isleaf(n::SelectionCursor)
@@ -406,8 +425,8 @@ _subset_root(s::Subset) = s.root
 
 The generic hierarchy cursor over a complete level grid or a subset of one,
 with up to `bucket` members per leaf; what `treeify(grid, n)` builds for a
-level grid. Leaf entries are stored per visit only when `bucket > 1` (and
-extents are expensive): the one-cell tree is lazy throughout.
+level grid. Leaf entries are stored per visit only when `bucket > 1`: the
+one-cell tree is lazy throughout.
 """
 function hierarchy_tree(grid; bucket::Integer=1)
     sys = system(grid)
@@ -418,29 +437,3 @@ function hierarchy_tree(grid; bucket::Integer=1)
     fr = SubsetFrontier(grid, sys, ref, _subset_keys(grid), false)
     return _cursor(fr, sys; root=_subset_root(grid), bucket)
 end
-
-"""
-    hierarchy_subtree(grid, cells; bucket = 1, root = nothing)
-
-The hierarchy cursor over positions `cells` (ascending) of a complete level
-grid, emitting those parent positions; `root` starts it at a known ancestor.
-"""
-function hierarchy_subtree(grid, cells::AbstractVector{<:Integer}; bucket::Integer=1, root=nothing)
-    sys = system(grid)
-    keys = cells isa AbstractVector{Int} ? cells : Int.(cells)
-    (keys isa AbstractRange || keys isa RangeCat || issorted(keys)) || (keys = sort(keys))
-    fr = SubsetFrontier(grid, sys, level(grid), keys, true)
-    return _cursor(fr, sys; root, bucket)
-end
-
-# `subtree` dispatches on the collection: a chunk (a Subset of this very grid)
-# with a root starts at that root, O(1).
-function subtree(grid, s::Subset)
-    if parent(s) === grid && s.root !== nothing && system(grid) !== nothing && level(grid) !== nothing &&
-       gridrelation(grid) isa NoParent
-        return hierarchy_subtree(grid, s.cells; root=s.root, bucket=leaf_capacity(grid, Balanced()))
-    end
-    return subtree(grid, parentpositions(s))
-end
-
-treeify(s::Subset, n::Integer) = _default_treeify(s, Int(n))

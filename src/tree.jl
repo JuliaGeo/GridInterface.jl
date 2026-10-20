@@ -53,14 +53,45 @@ Generic integer form:
 """
 treeify(grid; leaf_capacity=Balanced()) = treeify(grid, leaf_capacity)
 treeify(grid, hint::LeafHint) = treeify(grid, leaf_capacity(grid, hint))
-treeify(grid, n::Integer) = _default_treeify(grid, Int(n))
+treeify(grid, n::Integer) = _default_treeify(grid, n)
 
-function _default_treeify(grid, n::Int)
-    if system(grid) !== nothing && level(grid) !== nothing
-        return hierarchy_tree(grid; bucket=n)
-    end
-    return fallback_treeify(best_manifold(grid), grid, n)
+"""
+    SubtreeCapacity(n) <: Integer
+
+The leaf size [`subtree`](@ref) hands `treeify(grid, n)` when it asks for the
+grid's own tree to restrict. A provider's `treeify(g, n::Integer)` reads it as
+the integer `n` (it converts, promotes and compares as one); the generic
+`treeify` answers `nothing` where it would otherwise build the R-tree over the
+whole grid, since a subtree then builds its R-tree over just the cells instead.
+So the two generic paths share one builder (`_default_treeify`), and the
+exception costs no dispatch of its own.
+"""
+struct SubtreeCapacity <: Integer
+    n::Int
 end
+(::Type{T})(c::SubtreeCapacity) where {T<:Integer} = T(c.n)
+Base.promote_rule(::Type{SubtreeCapacity}, ::Type{T}) where {T<:Integer} = promote_type(Int, T)
+
+# The one generic tree builder, shared by `treeify` and `subtree`: a level
+# grid's hierarchy cursor, else the R-tree over the whole grid. Only the R-tree
+# costs O(ncells), and a `SubtreeCapacity` turns it into `nothing`.
+function _default_treeify(grid, n::Integer)
+    if system(grid) !== nothing && level(grid) !== nothing
+        return hierarchy_tree(grid; bucket=Int(n))
+    end
+    return _whole_rtree(grid, n)
+end
+_whole_rtree(grid, n::Integer) = fallback_treeify(best_manifold(grid), grid, Int(n))
+_whole_rtree(grid, ::SubtreeCapacity) = nothing
+
+"""
+    own_tree(grid, n::Integer) -> tree or nothing
+
+The tree `subtree` restricts: `treeify(grid, n)`, unless that would be
+GridInterface's R-tree over the whole grid (`nothing`; see
+[`SubtreeCapacity`](@ref)).
+"""
+own_tree(grid, n::Integer) = treeify(grid, SubtreeCapacity(Int(n)))
 
 """
     leaf_capacity(grid, hint::LeafHint) -> Int
@@ -75,34 +106,38 @@ leaf_capacity(grid, ::ForSweeps) = 8
 leaf_capacity(grid, ::ForQueries) = 1
 
 """
-    subtree(grid, cells)
+    subtree(grid, cells; leaf_capacity = Balanced())
+    subtree(grid, s::Subset; leaf_capacity = Balanced())
 
 A tree over the cells at positions `cells` of `grid` whose leaves emit
-**`grid`'s** positions (parent positions). Dispatches on the type of `cells`, so
-a typed collection builds in O(1): a [`Subset`](@ref) chunk with a root starts
-the hierarchy cursor at that root; a raster tile type starts the provider's
-quadtree at the tile. Plain vectors (sorted, unique) get the hierarchy cursor
-restricted to them on level grids, an R-tree over those cells otherwise.
-"""
-subtree(grid, cells::AbstractVector{<:Integer}) = _default_subtree(grid, cells)
+**`grid`'s** positions (parent positions): the grid's own tree,
+`treeify(grid; leaf_capacity)`, restricted to `cells` by a
+[`MaskedCursor`](@ref), whatever package built that tree. The restriction
+keeps `cells` lazy (a range stays a range), prunes children by
+[`position_span`](@ref), filters leaves by membership and starts at the
+deepest node that alone may hold members, so a chunk roots at its own node in
+O(depth). `cells` must be strictly ascending (an unsorted vector is sorted
+first); a [`Subset`](@ref) of this very grid restricts to its positions.
 
-function _default_subtree(grid, cells)
-    n = leaf_capacity(grid, Balanced())
-    if system(grid) !== nothing && level(grid) !== nothing && gridrelation(grid) isa NoParent
-        return hierarchy_subtree(grid, cells; bucket=n)
-    end
-    return fallback_subtree(best_manifold(grid), grid, cells, n)
+Dispatch on the collection lets a typed one build in O(1): a raster tile type
+starts the provider's quadtree at the tile, a multi-level set's chunk its
+cursor at its root. The exception is a grid with no tree of its own, whose
+`treeify` would be GridInterface's R-tree over the whole grid (see
+[`SubtreeCapacity`](@ref)): its subtree is the R-tree over just `cells`.
+
+The keyword is [`treeify`](@ref)'s: a [`LeafHint`](@ref), turned into a leaf
+size by [`leaf_capacity`](@ref)`(grid, hint)`, or the leaf size itself.
+"""
+function subtree(grid, cells::AbstractVector{<:Integer}; leaf_capacity=Balanced())
+    n = _capacity(grid, leaf_capacity)
+    t = own_tree(grid, n)
+    t === nothing && return fallback_subtree(best_manifold(grid), grid, cells, n)
+    return MaskedCursor{false}(t, _ascending(cells))
 end
 
-"""
-    extent_is_expensive(grid) -> Bool
-
-Traversal hint: whether [`cell_extent`](@ref) computes rather than reads.
-Default `true`. (The node-level counterpart is `STI.node_extent_is_expensive`;
-the polygon counterpart is [`cell_geometry_is_expensive`](@ref).) Also what
-decides whether a bucketed hierarchy-cursor leaf stores its entries per visit.
-"""
-extent_is_expensive(grid) = true
+# `treeify`'s reading of the keyword, for the `subtree` methods
+_capacity(grid, hint::LeafHint) = leaf_capacity(grid, hint)
+_capacity(grid, n::Integer) = Int(n)
 
 # `split_weight` and `subtree_indices` are SpatialTreeInterface's; GridInterface
 # adds methods for its own trees and wrappers.

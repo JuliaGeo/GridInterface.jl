@@ -12,6 +12,7 @@ family.
 | `BrokenTree(grid)` | tree | a leaf index is emitted twice |
 | `BrokenIntent(grid)` | tree | `ForSweeps` is ignored: one-cell leaves |
 | `LeakyWrapper(grid)` | tree | a hand-written pass-through forgets to forward `maxneighbors` |
+| `NarrowCapacity(grid)` | tree | its own tree's builder takes `n::Int`, so `subtree` never restricts it |
 | `BrokenAreas(grid)` | geometry | areas off by a factor |
 | `BrokenExtent(grid)` | geometry | `cell_extent` does not cover the cell (the tree stays honest) |
 | `BrokenLocation(grid)` | location | `cellat` answers the next position (wrap an analytic grid) |
@@ -22,7 +23,8 @@ family.
 | `stateful_pair(small, large)` | performance | a verb's bytes grow after a call on the bigger grid |
 
 A wrapper is an `AbstractWrappedGrid` (everything else forwards); `FalseAnalytic`,
-`LeakyWrapper` and the level grids of a wrapped system are thin explicit types.
+`LeakyWrapper`, `NarrowCapacity` and the level grids of a wrapped system are thin
+explicit types.
 """
 module Mocks
 
@@ -35,8 +37,8 @@ using GeometryOps.UnitSpherical: UnitSphericalPoint, SphericalCap, spherical_dis
 import Extents
 
 export CubeSystem, CubeCell, CubeGrid
-export BrokenNeighbors, BrokenTree, BrokenIntent, LeakyWrapper, BrokenAreas, BrokenExtent, BrokenLocation,
-    FalseAnalytic, BrokenDual, BrokenCovering, BrokenDescendantRange, Stateful, stateful_pair
+export BrokenNeighbors, BrokenTree, BrokenIntent, LeakyWrapper, NarrowCapacity, BrokenAreas, BrokenExtent,
+    BrokenLocation, FalseAnalytic, BrokenDual, BrokenCovering, BrokenDescendantRange, Stateful, stateful_pair
 
 # ===========================================================================
 # CubeSystem: the gnomonic cube, six root faces refined 4-way. Ids are
@@ -165,6 +167,7 @@ Structured.nfaces(::CubeGrid) = 6
 Structured.facesize(g::CubeGrid, f) = (_n(g), _n(g))
 Structured.facevertex(g::CubeGrid, f, a, b) = _cubept(f, -1 + 2(a - 1) / _n(g), -1 + 2(b - 1) / _n(g))
 Structured.faceposition(g::CubeGrid, f, i, j) = (f - 1) * _facecells(g) + Int(_morton(i - 1, j - 1)) + 1
+Structured.facecolumnmajor(::CubeGrid, f) = false     # Morton order within a face
 function Structured.facecell(g::CubeGrid, k)
     f, within = divrem(k - 1, _facecells(g))
     ix, iy = _demorton(Int64(within))
@@ -315,6 +318,26 @@ GOC.best_manifold(f::FalseAnalytic) = best_manifold(f.grid)
 GrI.cellshape(f::FalseAnalytic) = cellshape(f.grid)
 GrI.cell_boundary(f::FalseAnalytic, i::Integer) = cell_boundary(f.grid, i)
 GrI.location_is_analytic(::FalseAnalytic) = true
+
+"""
+    NarrowCapacity(grid)
+
+The required four verbs of `grid`, its `cell_extent`, no hierarchy, and its
+tree through `treeify(g, n::Int)`: `subtree` asks with an `Integer` that is
+not an `Int`, the generic answers, and the subtree is an R-tree over the cells
+rather than the grid's tree restricted (tree family). Wrap a grid with a tree
+of its own that is not an R-tree. A thin type, not a wrapper.
+"""
+struct NarrowCapacity{G}
+    grid::G
+end
+GrI.isgrid(::NarrowCapacity) = true
+GrI.ncells(f::NarrowCapacity) = ncells(f.grid)
+GOC.best_manifold(f::NarrowCapacity) = best_manifold(f.grid)
+GrI.cellshape(f::NarrowCapacity) = cellshape(f.grid)
+GrI.cell_boundary(f::NarrowCapacity, i::Integer) = cell_boundary(f.grid, i)
+GrI.cell_extent(f::NarrowCapacity, i::Integer) = cell_extent(f.grid, i)
+GrI.treeify(f::NarrowCapacity, n::Int) = treeify(f.grid, n)
 
 """
     LeakyWrapper(grid)

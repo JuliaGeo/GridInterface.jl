@@ -30,12 +30,12 @@ module Structured
 import ..GridInterface as GrI
 using ..GridInterface: AbstractGrid, ncells, cellshape, ConvexCells, GeneralCells, SingleRing,
     cell_boundary, cell_corners, cell_geometry, cell_extent, cell_contains, cellat, location_is_analytic,
-    treeify, subtree, leaf_capacity, Balanced, ForSweeps, ForQueries, extent_is_expensive, grid_extent,
+    treeify, subtree, leaf_capacity, Balanced, ForSweeps, ForQueries, grid_extent,
     chunks, chunkat, Subset, parentpositions,
     neighbors, Connectivity, Edge, Vertex, winding, CounterClockwise, Unordered, maxneighbors, neighbors_are_analytic,
     VertexKey, vertex_key, vertex_cells, vertices_are_analytic, isglobal,
     check_point, iscurved, UnitSphericalPoint, SphericalCap, UnitSphereFromGeographic
-import ..GridInterface: STI, split_weight, subtree_indices
+import ..GridInterface: STI, split_weight, subtree_indices, position_span, MaskedCursor
 using SmallCollections: SmallVector, push
 import GeometryOpsCore as GOC
 using GeometryOpsCore: Manifold, Planar, Spherical, best_manifold

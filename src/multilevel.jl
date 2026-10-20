@@ -108,7 +108,6 @@ conformity(s::MultiLevelSet) = NonConforming()
 # overlap and this is the hierarchy's answer (one containing member, not
 # necessarily the lowest position); the PRD lets an analytic answer win there.
 location_is_analytic(s::MultiLevelSet) = s.sorted && location_is_analytic(_refgrid(s))
-extent_is_expensive(s::MultiLevelSet) = extent_is_expensive(_refgrid(s))
 
 # Geometry: one forwarding step, type stable iff `levelgrid(sys, ::Int)` has one
 # concrete return type for every level.
@@ -181,8 +180,6 @@ fr_n(s::MultiLevelSet) = length(s.cells)
 treeify(s::MultiLevelSet, bucket::Integer) =
     has_sorted_subtrees(s.system) ? HierarchyCursor(s; bucket) : SelectionCursor(s; bucket)
 
-_fr_extent_is_expensive(s::MultiLevelSet) = extent_is_expensive(s)
-
 """
     MLSFrontier(set, positions, emit)
 
@@ -205,7 +202,6 @@ fr_n(F::MLSFrontier) = length(F.pos)
 @inline fr_emit(F::MLSFrontier{M,V,false}, k) where {M,V} = k
 @inline fr_emitted(F::MLSFrontier{M,V,true}, ks::AbstractVector{Int}) where {M,V} = view(F.pos, ks)
 @inline fr_extent(F::MLSFrontier, k) = cell_extent(F.s, @inbounds F.pos[k])
-_fr_extent_is_expensive(F::MLSFrontier) = extent_is_expensive(F.s)
 
 function _mls_cursor(m::MultiLevelSet, pos, emit::Bool; root=nothing, bucket=1)
     m.sorted || return fallback_subtree(best_manifold(m), m, pos, bucket)
@@ -214,11 +210,11 @@ end
 
 treeify(s::Subset{<:MultiLevelSet}, n::Integer) =
     s.parent.sorted ? _mls_cursor(s.parent, s.cells, false; root=s.root, bucket=n) : _default_treeify(s, Int(n))
-subtree(m::MultiLevelSet, cells::AbstractVector{<:Integer}) =
-    _mls_cursor(m, cells, true; bucket=leaf_capacity(m, Balanced()))
-subtree(m::MultiLevelSet, s::Subset) = parent(s) === m ?
-    _mls_cursor(m, s.cells, true; root=s.root, bucket=leaf_capacity(m, Balanced())) :
-    subtree(m, parentpositions(s))
+subtree(m::MultiLevelSet, cells::AbstractVector{<:Integer}; leaf_capacity=Balanced()) =
+    _mls_cursor(m, cells, true; bucket=_capacity(m, leaf_capacity))
+subtree(m::MultiLevelSet, s::Subset; leaf_capacity=Balanced()) = parent(s) === m ?
+    _mls_cursor(m, s.cells, true; root=s.root, bucket=_capacity(m, leaf_capacity)) :
+    subtree(m, parentpositions(s); leaf_capacity)
 
 """
     chunks(set::MultiLevelSet, l) -> AbstractVector of subsets

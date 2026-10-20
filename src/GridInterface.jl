@@ -62,6 +62,7 @@ include("identity.jl")
 include("geometry.jl")
 include("tree.jl")
 include("subsets.jl")
+include("restrict.jl")
 include("neighbors.jl")
 include("dual.jl")
 include("hierarchy.jl")
@@ -84,7 +85,7 @@ export Tessellation, Tessellating, Overlapping, tessellation
 export cellat, cellsat, cell_contains, location_is_analytic
 export UnitSphericalPoint, SphericalCap
 # --- tree
-export treeify, subtree, split_weight, subtree_indices, extent_is_expensive, leaf_capacity, grid_extent
+export treeify, subtree, split_weight, subtree_indices, position_span, span_range, span_mayhold, span_inside, LatticeBlock, leaf_capacity, grid_extent
 export LeafHint, Balanced, ForSweeps, ForQueries
 export query, query_candidates, query_region, QueryPredicate, Intersects, Within, Contains, CentroidIn
 export RootIndex, root_index
@@ -104,6 +105,6 @@ export Conformity, Conforming, NonConforming, conformity
 # --- hierarchy
 export AbstractHierarchicalGridSystem, issystem, levels, rootcells, children, levelgrid
 export has_sorted_subtrees, descendant_range, node_extent, has_congruent_refinement, ancestor
-export HierarchyCursor, SelectionCursor, MultiLevelSet, hierarchy_chunks, expand_to_reference, aggregation_pairs
+export HierarchyCursor, SelectionCursor, MaskedCursor, MultiLevelSet, hierarchy_chunks, expand_to_reference, aggregation_pairs
 
 end

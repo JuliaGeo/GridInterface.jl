@@ -87,7 +87,8 @@ function node_extent end
 
 Whether every cell's descendants at any finer level occupy one contiguous
 position range ([`descendant_range`](@ref)). Enables the window-mode cursor,
-chunks by level, and O(1) `subtree`. Default `false`.
+chunks by level, and a `subtree` that roots at a chunk's own cell in O(depth).
+Default `false`.
 """
 has_sorted_subtrees(sys) = false
 

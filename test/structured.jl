@@ -23,7 +23,6 @@ Structured.facevertex(g::CountingExtents, f, a, b) = Structured.facevertex(g.gri
 Structured.faceposition(g::CountingExtents, f, i, j) = Structured.faceposition(g.grid, f, i, j)
 Structured.facecell(g::CountingExtents, k) = Structured.facecell(g.grid, k)
 GOC.best_manifold(g::CountingExtents) = GOC.best_manifold(g.grid)
-GrI.extent_is_expensive(g::CountingExtents) = GrI.extent_is_expensive(g.grid)
 function Structured.blockextent(g::CountingExtents, f, ir::UnitRange{Int}, jr::UnitRange{Int})
     g.calls[] += 1
     return Structured.blockextent(g.grid, f, ir, jr)
@@ -41,8 +40,8 @@ end
     @test collect(cell_boundary(rg, 22)) == [(1.0, 1.0), (2.0, 1.0), (2.0, 2.0), (1.0, 2.0)]
     @test length(cell_corners(cb, 1)) == 3 && length(cell_corners(cb, 40)) == 4     # pole corner collapsed
     @test length(cell_boundary(cb, 648)) == 3
-    @test cell_extent(rg, 22) == Extents.Extent(X=(1.0, 2.0), Y=(1.0, 2.0)) && !extent_is_expensive(rg)
-    @test cell_extent(cb, 40) isa SphericalCap && extent_is_expensive(cb)
+    @test cell_extent(rg, 22) == Extents.Extent(X=(1.0, 2.0), Y=(1.0, 2.0))
+    @test cell_extent(cb, 40) isa SphericalCap
     @test isglobal(RegularGrid(GOC.Spherical(), collect(lons), collect(lats))) && !isglobal(rg)
 
     # conformance: both grids pass every family they claim
@@ -129,6 +128,18 @@ end
     @test subtree_indices(treeify(c5)) == walk(treeify(c5)) && Structured.block_indices(treeify(c5)) == 1:ncells(c5)
     @test subtree_indices(subtree(rg, c5)) == walk(subtree(rg, c5))
     @test (@allocated grid_extent(c5)) == 0 && (@allocated subtree(rg, c5)) == 0 && (@allocated treeify(c5)) == 0
+    # the subtree keyword reaches the tile's cursor and the masked quadtree alike
+    @test subtree(rg, c5; leaf_capacity=ForSweeps()).leafsize == (4, 4) && subtree(rg, c5; leaf_capacity=9).leafsize == (3, 3)
+    @test subtree(rg, collect(parentpositions(c5)); leaf_capacity=ForSweeps()).node.leafsize == (4, 4)
+    # quadtree spans are lattice blocks, exact against a range: a node holds a
+    # single position iff its block says it may
+    for n in allnodes(t)
+        sp = position_span(n)
+        ps = walk(n)
+        @test sp isa LatticeBlock && all(p -> p in span_range(sp), ps)
+        @test all(p -> span_mayhold(sp, p:p) == (p in ps), span_range(sp))
+    end
+    @test all(n -> span_range(position_span(n)) == first(walk(n)):last(walk(n)), allnodes(treeify(cube)))
     cc = chunks(cb)[1]
     @test grid_extent(cc) isa SphericalCap && all(i -> all(p -> GO.UnitSpherical.spherical_distance(grid_extent(cc).point, p) <= grid_extent(cc).radius,
         cell_boundary(cc, i)), 1:ncells(cc))

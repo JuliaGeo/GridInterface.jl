@@ -39,7 +39,7 @@ const WRAPPED_VERBS = (
     (:level, ()), (:system, ()), (:gridrelation, ()), (:parentpositions, ()),
     # geometry and location
     (:best_manifold, ()), (:cellshape, ()), (:edgekind, ()), (:tessellation, ()), (:isglobal, ()),
-    (:cellsize, ()), (:cell_geometry_is_expensive, ()), (:extent_is_expensive, ()),
+    (:cellsize, ()), (:cell_geometry_is_expensive, ()),
     (:location_is_analytic, ()),
     (:cell_boundary, (Integer,)), (:cell_geometry, (Integer,)), (:cell_corners, (Integer,)),
     (:cell_centroid, (Integer,)), (:cell_area, (Integer,)), (:cell_extent, (Integer,)),

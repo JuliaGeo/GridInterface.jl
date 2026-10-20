@@ -338,6 +338,121 @@ end
     @test system(lg) === sys && level(lg) == 4
 end
 
+@testset "restriction: the grid's own tree over a subset of its cells" begin
+    sys = QuadSystem(5); g = levelgrid(sys, 4)
+    walk(n) = STI.isleaf(n) ? Int[i for (i, _) in STI.child_indices_extents(n)] :
+              reduce(vcat, (walk(c) for c in STI.getchild(n)); init=Int[])
+    depth(n) = STI.isleaf(n) ? 0 : 1 + maximum(depth, STI.getchild(n))
+    entries(n) = STI.isleaf(n) ? collect(STI.child_indices_extents(n)) :
+                 reduce(vcat, (entries(c) for c in STI.getchild(n)); init=Tuple{Int,Any}[])
+    # spans: every tree GridInterface builds answers, the R-tree does not
+    t = treeify(g)
+    @test position_span(t) == 1:ncells(g)
+    @test all(c -> position_span(c) == subtree_indices(c), STI.getchild(t))
+    @test position_span(treeify(TinyPlanar(6, 5))) === nothing
+    # a chunk roots at its own node (the chunk's root cell): the span is the chunk
+    c = chunks(g, 2)[3]
+    st = subtree(g, c)
+    @test st.cells === parentpositions(c) && position_span(st) == parentpositions(c)
+    @test st.node.id == c.root && position_span(st.node) == parentpositions(c) && depth(st) < depth(t)
+    @test split_weight(st) == ncells(c) && subtree_indices(st) == parentpositions(c) && walk(st) == parentpositions(c)
+    @test (@allocated subtree(g, c)) == 0
+    # a vector of members prunes by span and filters leaves; emitted in leaf order
+    v = [3, 40, 41, 200, 201, 202, 203, 255]
+    sv = subtree(g, v)
+    @test sort!(walk(sv)) == v && sort(subtree_indices(sv)) == v && split_weight(sv) == split_weight(sv.node)
+    @test STI.nchild(sv) == 2 && all(c -> !isempty(walk(c)), STI.getchild(sv))      # quarters 1 and 4 hold members
+    @test STI.getchild(sv, 2) == collect(STI.getchild(sv))[2]
+    @test sort!(walk(subtree(g, [255, 3, 40]))) == [3, 40, 255]                          # unsorted members are sorted
+    @test position_span(subtree(g, 201:204)) == 201:204 && STI.isleaf(subtree(g, 201:204))
+    @test STI.nchild(subtree(g, Int[])) == 0 && isempty(walk(subtree(g, Int[])))
+    # a subset's own tree is the parent's, restricted, emitting the subset's positions
+    s = subset(g, v)
+    ts = treeify(s)
+    @test ts isa MaskedCursor{<:HierarchyCursor} && sort!(walk(ts)) == 1:length(v) && sort(subtree_indices(ts)) == 1:length(v)
+    @test position_span(ts) == 1:length(v) && all(e -> e[2] == cell_extent(s, e[1]), entries(ts))
+    r = subset(g, 17:32)
+    tr = treeify(r)
+    @test position_span(tr) == 1:16 && walk(tr) == 1:16 && subtree_indices(tr) == 1:16 && split_weight(tr) == 16
+    ss = subset(r, [2, 5, 9])           # a subset of a subset restricts twice
+    @test sort!(walk(treeify(ss))) == 1:3 && position_span(treeify(ss)) == 1:3
+    @test leaves(subtree(r, ss)) == [2, 5, 9]
+    # the exception: a grid with no tree of its own keeps the R-tree over just the cells
+    p = TinyPlanar(6, 5)
+    @test GrI.own_tree(p, 4) === nothing && !(subtree(p, 1:30) isa MaskedCursor) && leaves(subtree(p, [2, 9])) == [2, 9]
+    @test !(treeify(subset(p, 1:4)) isa MaskedCursor) && leaves(treeify(subset(p, 1:4))) == 1:4
+    @test GrI.own_tree(g, 4) isa HierarchyCursor && Int(GrI.SubtreeCapacity(3)) == 3 && GrI.SubtreeCapacity(3) == 3 && max(GrI.SubtreeCapacity(3), 2) == 3
+    # a lattice block: three rows of two from a stride of ten; the rows' gaps hold nothing
+    b = LatticeBlock(11, 2, 10, 3)
+    @test span_range(b) == 11:32 && span_mayhold(b, 11:12) && span_mayhold(b, 32:40) && span_mayhold(b, 1:11)
+    @test !span_mayhold(b, 13:20) && !span_mayhold(b, 23:30) && !span_mayhold(b, 33:40) && !span_mayhold(b, 1:10) && !span_mayhold(b, 5:4)
+    @test span_mayhold(b, [5, 22, 40]) && span_inside(b, 11:32) && !span_inside(b, 12:32) && span_inside(11:32, 1:40) && !span_inside(11:32, 12:40)
+    @test span_mayhold(nothing, 1:0) && !span_inside(nothing, 1:10) && span_range(1:3) == 1:3
+end
+
+@testset "restriction laws over every tree kind and cell set" begin
+    # A point under an extent: planar boxes, or caps over unit-sphere vertices.
+    holds(e::Extents.Extent, v) = e.X[1] - 1e-9 <= GI.x(v) <= e.X[2] + 1e-9 && e.Y[1] - 1e-9 <= GI.y(v) <= e.Y[2] + 1e-9
+    holds(e::SphericalCap, v) = e.radius >= pi ||
+        GO.UnitSpherical.spherical_distance(e.point, UnitSphericalPoint(v[1], v[2], v[3])) <= e.radius + 1e-9
+    bounds(e, grid, p) = all(v -> holds(e, v), cell_boundary(grid, p))
+    # (a) the leaves emit exactly `want`, once each; (b) every node and leaf extent
+    # bounds its members' cells; (c) `subtree_indices` is the members in traversal
+    # order; (d) `split_weight` bounds the members and never grows going down.
+    # `pos(k)` is the grid position an emitted `k` names.
+    function laws(t, want, grid, pos)
+        ok = true
+        function visit(n, w0)
+            es = STI.isleaf(n) ? collect(STI.child_indices_extents(n)) : nothing
+            mem = es === nothing ? reduce(vcat, (visit(c, split_weight(n)) for c in STI.getchild(n)); init=Int[]) :
+                  Int[k for (k, _) in es]
+            w, ext = split_weight(n), STI.node_extent(n)
+            ok &= collect(subtree_indices(n)) == mem && length(mem) <= w <= w0
+            ok &= all(k -> bounds(ext, grid, pos(k)), mem)
+            es === nothing || (ok &= all(((k, e),) -> bounds(e, grid, pos(k)), es))
+            return mem
+        end
+        mem = visit(t, typemax(Int))
+        return ok && sort(mem) == want && allunique(mem)
+    end
+    # contiguous, a chunk, sparse (deterministic scatter), single and empty
+    function cellsets(grid)
+        N = ncells(grid)
+        scatter(m, k) = sort!(unique([mod(i * 7919 + k * 104729, N) + 1 for i in 1:m]))
+        sets = Any[1:N, 2:N÷3, N÷2:N, [N ÷ 2], N:N, scatter(5, 1), scatter(N ÷ 4, 2), scatter(N ÷ 2, 3), Int[], 1:0]
+        ch = chunks(grid)
+        ch === nothing || append!(sets, (ch[1], ch[length(ch)], collect(parentpositions(ch[(length(ch) + 1) ÷ 2]))))
+        return sets
+    end
+    sys = QuadSystem(5); qg = levelgrid(sys, 4)
+    grids = (("HierarchyCursor", qg), ("TopDownQuadtreeCursor", RegularGrid(collect(0.0:1.0:24.0), collect(0.0:1.0:6.0))),
+             ("FaceRootTree", TinyCubeSphere(4)), ("R-tree", TinyPlanar(7, 5)))
+    for (name, g) in grids, cs in cellsets(g), hint in (ForQueries(), Balanced(), ForSweeps())
+        cells = collect(Int, cs isa GrI.AbstractGrid ? parentpositions(cs) : cs)
+        name == "R-tree" && isempty(cells) && continue      # an R-tree over no cells does not build
+        @test laws(subtree(g, cs; leaf_capacity=hint), cells, g, identity)
+        cs isa GrI.AbstractGrid && continue
+        # (e) a subset's own tree emits its own positions, which name the parent's cells
+        s = subset(g, cells)
+        @test laws(treeify(s; leaf_capacity=hint), collect(1:length(cells)), g, k -> cells[k])
+        @test all(k -> cell_extent(s, k) == cell_extent(g, cells[k]), unique([1, length(cells)]) ∩ (1:length(cells)))
+    end
+    # the same laws over a selection cursor, which no test system's own tree is
+    sel = GrI.SelectionCursor(GrI.LevelFrontier(qg, sys, 4); bucket=4)
+    for cs in cellsets(qg)
+        cells = collect(Int, cs isa GrI.AbstractGrid ? parentpositions(cs) : cs)
+        @test laws(MaskedCursor{false}(sel, cells), cells, qg, identity)
+        @test laws(MaskedCursor{true}(sel, cells), collect(1:length(cells)), qg, k -> cells[k])
+    end
+    # a lattice block against a vector is exact: members in the row gaps hold nothing,
+    # so one member under a wide face roots the restriction at its leaf
+    b = LatticeBlock(11, 2, 10, 3)
+    @test !span_mayhold(b, [13, 20, 23, 30, 33]) && span_mayhold(b, [13, 31]) && !span_mayhold(b, Int[]) && !span_mayhold(b, [1, 10, 40])
+    rg = RegularGrid(collect(0.0:1.0:64.0), collect(0.0:1.0:8.0))
+    @test STI.isleaf(subtree(rg, [300]).node) && subtree_indices(subtree(rg, [300])) == [300]
+    @test STI.isleaf(subtree(rg, [3, 4]).node) == STI.isleaf(subtree(rg, 3:4).node)
+end
+
 @testset "intents and wrappers" begin
     maxleaf(t) = STI.isleaf(t) ? length(STI.child_indices_extents(t)) : maximum(maxleaf, STI.getchild(t); init=0)
     sys = QuadSystem(5); g = levelgrid(sys, 4)
@@ -349,6 +464,18 @@ end
     @test maxleaf(treeify(g, 3)) <= 3 && leaves(treeify(g, 3)) == 1:ncells(g)
     @test treeify(g).bucket == 4 && treeify(g, Balanced()) == treeify(g)
     @test (@allocated treeify(g; leaf_capacity=ForSweeps())) == 0
+    # a bucketed leaf builds its entries once per visit; a one-cell leaf stays lazy
+    firstleaf(t) = STI.isleaf(t) ? t : firstleaf(first(STI.getchild(t)))
+    @test STI.child_indices_extents(firstleaf(ts)) isa Vector
+    @test STI.child_indices_extents(firstleaf(treeify(g; leaf_capacity=ForQueries()))) isa GrI.LeafEntries
+    # a cell node's children infer concretely (the root takes its ids from `rootcells`)
+    @test isconcretetype(only(Base.return_types(STI.getchild, (typeof(firstleaf(ts)),))))
+    # subtree takes the same keyword, on every route: the grid's own tree, restricted
+    @test subtree(g, 5:40) isa MaskedCursor{<:HierarchyCursor}
+    @test subtree(g, 5:40).node.bucket == 4 && subtree(g, 5:40; leaf_capacity=ForSweeps()).node.bucket == 8
+    @test subtree(g, 5:40; leaf_capacity=3).node.bucket == 3 && leaves(subtree(g, 5:40; leaf_capacity=3)) == 5:40
+    @test subtree(g, subset(g, 17:32); leaf_capacity=ForSweeps()).node.bucket == 8
+    @test subtree(g, chunks(g, 2)[3]; leaf_capacity=ForSweeps()).node.bucket == 8
     # the R-tree fallback takes the capacity as its node capacity (floored at 2)
     p = TinyPlanar(6, 5)
     @test maxleaf(treeify(p; leaf_capacity=ForSweeps())) <= 8 && leaves(treeify(p; leaf_capacity=ForSweeps())) == 1:30
@@ -357,6 +484,8 @@ end
     # subtree of a multi-level set takes the capacity on the fallback too
     m = MultiLevelSet(sys, [QuadCell(1, 0), QuadCell(1, 1), QuadCell(1, 2), QuadCell(2, 12), QuadCell(2, 13), QuadCell(2, 14), QuadCell(2, 15)])
     @test leaves(treeify(m; leaf_capacity=ForSweeps())) == 1:7 && maxleaf(treeify(m; leaf_capacity=ForQueries())) == 1
+    @test subtree(m, [2, 5, 7]; leaf_capacity=ForSweeps()).bucket == 8 && leaves(subtree(m, [2, 5, 7]; leaf_capacity=2)) == [2, 5, 7]
+    @test maxleaf(subtree(p, 1:30; leaf_capacity=ForSweeps())) <= 8 && leaves(subtree(p, 1:30; leaf_capacity=3)) == 1:30
     # GridAndTree: the stored tree for every hint and an integer
     t = treeify(g)
     gt = GridAndTree(g, t)

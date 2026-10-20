@@ -258,7 +258,8 @@ _cell_geometry(::CellShape, grid, i) = _missing_geometry(grid)
 Hint: whether [`cell_geometry`](@ref)/[`cell_boundary`](@ref) computes (a
 densified chart boundary, a projection) rather than reads. A consumer that
 visits a cell's polygon many times (per chunk pair) memoises it when this is
-`true`. Default `false`. (The extent counterpart is [`extent_is_expensive`](@ref).)
+`true`. Default `false`. (Extents have no grid-level counterpart: a tree
+declares the cost of its node extents with `STI.node_extent_is_expensive`.)
 """
 cell_geometry_is_expensive(grid) = false
 

@@ -114,6 +114,7 @@ end
                         (BrokenTree(TinyPlanar(4, 3)), :tree),
                         (BrokenIntent(quad), :tree),
                         (LeakyWrapper(quad), :tree),
+                        (NarrowCapacity(rg), :tree),
                         (BrokenAreas(TinyPlanar(4, 3)), :geometry),
                         (BrokenExtent(TinyPlanar(4, 3)), :geometry),
                         (BrokenLocation(rg), :location),
@@ -140,6 +141,7 @@ end
     @test any(l -> occursin("leaves emit exactly 1:ncells once", l), failed_laws(check_grid(BrokenTree(TinyPlanar(4, 3)))))
     @test any(l -> occursin("ForSweeps", l), failed_laws(check_grid(BrokenIntent(quad))))
     @test failed_laws(check_grid(LeakyWrapper(quad))) == ["a wrapper does not demote a verb its parent provides to a fallback"]
+    @test failed_laws(check_grid(NarrowCapacity(rg))) == ["subtree restricts treeify(grid, n)'s own tree (its integer method takes any Integer)"]
     @test failed_laws(check_grid(BrokenAreas(TinyPlanar(4, 3)))) == ["overridden area equals the geometric answer (rtol 0.001)"]
     @test failed_laws(check_grid(BrokenExtent(TinyPlanar(4, 3)))) == ["cell_extent contains the cell"]
     @test failed_laws(check_grid(FalseAnalytic(TinyPlanar(4, 3)))) == ["declared analytic location is provided (not the fallback)"]
