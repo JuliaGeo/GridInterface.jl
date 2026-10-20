@@ -18,8 +18,8 @@ GeometryOps = "3251bfac-6a57-4b6d-aa61-ac1fef2975ab"
 GridInterfaceGeometryOpsExt = "GeometryOps"
 
 [sources]
-SpatialTreeInterface = {path = "/home/anshul/.julia/dev/geo/GeometryOps-split/SpatialTreeInterface"}
-UnitSphericalGeometryCore = {path = "/home/anshul/.julia/dev/geo/GeometryOps-split/UnitSphericalGeometryCore"}
+SpatialTreeInterface = {url = "https://github.com/JuliaGeo/GeometryOps.jl.git", rev = "as/split-unitsphericalgeometrycore", subdir = "SpatialTreeInterface"}
+UnitSphericalGeometryCore = {url = "https://github.com/JuliaGeo/GeometryOps.jl.git", rev = "as/split-unitsphericalgeometrycore", subdir = "UnitSphericalGeometryCore"}
 
 [compat]
 Extents = "0.1"

@@ -10,8 +10,8 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 UnitSphericalGeometryCore = "374d2b58-edf9-4f97-868a-42ae1c074d0a"
 
 [sources]
-GeometryOps = {path = "/home/anshul/.julia/dev/geo/GeometryOps-split"}
+GeometryOps = {url = "https://github.com/JuliaGeo/GeometryOps.jl.git", rev = "as/split-unitsphericalgeometrycore"}
 GridInterface = {path = "../../.."}
 GridInterfaceConformance = {path = ".."}
-SpatialTreeInterface = {path = "/home/anshul/.julia/dev/geo/GeometryOps-split/SpatialTreeInterface"}
-UnitSphericalGeometryCore = {path = "/home/anshul/.julia/dev/geo/GeometryOps-split/UnitSphericalGeometryCore"}
+SpatialTreeInterface = {url = "https://github.com/JuliaGeo/GeometryOps.jl.git", rev = "as/split-unitsphericalgeometrycore", subdir = "SpatialTreeInterface"}
+UnitSphericalGeometryCore = {url = "https://github.com/JuliaGeo/GeometryOps.jl.git", rev = "as/split-unitsphericalgeometrycore", subdir = "UnitSphericalGeometryCore"}

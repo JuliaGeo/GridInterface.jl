@@ -20,11 +20,11 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 UnitSphericalGeometryCore = "374d2b58-edf9-4f97-868a-42ae1c074d0a"
 
 [sources]
-ConservativeRegridding = {path = "/home/anshul/.julia/dev/geo/gridinterface/ConservativeRegridding.jl"}
-DiscreteGlobalGrids = {path = "/home/anshul/.julia/dev/geo/gridinterface/DiscreteGlobalGrids.jl"}
-GeometryOps = {path = "/home/anshul/.julia/dev/geo/GeometryOps-split"}
-GlobalRegridding = {path = "/home/anshul/.julia/dev/geo/gridinterface/DiscreteGlobalGrids.jl/lib/GlobalRegridding"}
-GridInterface = {path = "/home/anshul/.julia/dev/geo/gridinterface/GridInterface.jl"}
-GridInterfaceConformance = {path = "/home/anshul/.julia/dev/geo/gridinterface/GridInterface.jl/lib/GridInterfaceConformance"}
-SpatialTreeInterface = {path = "/home/anshul/.julia/dev/geo/GeometryOps-split/SpatialTreeInterface"}
-UnitSphericalGeometryCore = {path = "/home/anshul/.julia/dev/geo/GeometryOps-split/UnitSphericalGeometryCore"}
+ConservativeRegridding = {url = "https://github.com/JuliaGeo/ConservativeRegridding.jl.git", rev = "gridinterface"}
+DiscreteGlobalGrids = {url = "https://github.com/JuliaGeo/DiscreteGlobalGrids.jl.git", rev = "gridinterface"}
+GeometryOps = {url = "https://github.com/JuliaGeo/GeometryOps.jl.git", rev = "as/split-unitsphericalgeometrycore"}
+GlobalRegridding = {url = "https://github.com/JuliaGeo/DiscreteGlobalGrids.jl.git", rev = "gridinterface", subdir = "lib/GlobalRegridding"}
+GridInterface = {path = "../.."}
+GridInterfaceConformance = {path = "../../lib/GridInterfaceConformance"}
+SpatialTreeInterface = {url = "https://github.com/JuliaGeo/GeometryOps.jl.git", rev = "as/split-unitsphericalgeometrycore", subdir = "SpatialTreeInterface"}
+UnitSphericalGeometryCore = {url = "https://github.com/JuliaGeo/GeometryOps.jl.git", rev = "as/split-unitsphericalgeometrycore", subdir = "UnitSphericalGeometryCore"}
