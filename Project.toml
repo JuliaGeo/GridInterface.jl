@@ -1,7 +1,7 @@
 name = "GridInterface"
-uuid = "7bba8399-ed35-4924-b5cf-83e2b32b3972"
+uuid = "ae69c2d7-6fba-4c43-9473-473fff3cdc1f"
 version = "0.0.1"
-authors = ["Anshul Singhvi <anshulsinghvi@gmail.com>"]
+authors = ["GridInterface contributors", "Rafael Schouten", "Anshul Singhvi", "Gael Forget", "Milan Klower", "Simone Silvestri"]
 
 [deps]
 Extents = "411431e0-e8b7-467b-b5e0-f676ba4f2910"
