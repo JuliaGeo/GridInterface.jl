@@ -23,7 +23,7 @@ jobs:
       fail-fast: false
       matrix:
         version:
-          - '1.11' # oldest with `[sources]`, which the unregistered GeometryOps split needs
+          - '1.12' # oldest that honours dependencies' `[sources]` and meets the allocation laws
           - '1'
           - 'pre'
         os:
@@ -52,7 +52,7 @@ jobs:
       fail-fast: false
       matrix:
         version:
-          - '1.11'
+          - '1.12'
           - '1'
     steps:
       - uses: actions/checkout@v6

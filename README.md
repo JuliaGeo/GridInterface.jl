@@ -6,4 +6,4 @@
 
 A shared contract for grids on the plane and the sphere: identity, geometry, neighbours, hierarchy, spatial trees and subsets. `lib/GridInterfaceConformance` checks a provider against the contract's laws.
 
-GridInterface builds on the unregistered `SpatialTreeInterface` and `UnitSphericalGeometryCore` from GeometryOps.jl's `as/split-unitsphericalgeometrycore` branch, through `[sources]`, so it needs Julia 1.11 or later.
+GridInterface builds on the unregistered `SpatialTreeInterface` and `UnitSphericalGeometryCore` from GeometryOps.jl's `as/split-unitsphericalgeometrycore` branch, through `[sources]`, so it needs Julia 1.12 or later.
