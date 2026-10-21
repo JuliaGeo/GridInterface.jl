@@ -162,6 +162,18 @@ function is_ccw_sequence(az)
     wraps = count(k -> az[mod1(k + 1, length(az))] < az[k], eachindex(az))
     return wraps == 1
 end
+# CCW order of an open fan: every step turns CCW and the sweep from the first
+# azimuth to the last stays short of a full turn
+function is_ccw_open_sequence(az)
+    length(az) <= 2 && return true
+    sweep = 0.0
+    for k in 1:length(az)-1
+        d = mod(az[k + 1] - az[k], 2π)
+        d > 0 || return false
+        sweep += d
+    end
+    return sweep < 2π
+end
 
 # --- fallback detection ------------------------------------------------------------
 """

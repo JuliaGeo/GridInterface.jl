@@ -70,6 +70,9 @@ function capture(f)
 end
 
 rg = RegularGrid(collect(0.0:1.0:5.0), collect(0.0:1.0:4.0))
+# a regional lon/lat grid reaching the north pole: the pole is an open fan of
+# the eight polar-row cells, the only open fan with three or more cells
+polar = RegularGrid(GOC.Spherical(), collect(-40.0:10.0:40.0), collect(50.0:10.0:90.0))
 lonlat = CellBasedGrid([GO.UnitSphereFromGeographic()((lo, la)) for lo in range(-180, 180; length=37), la in range(-90, 90; length=19)])
 quad = levelgrid(QuadSystem(4), 3)
 cube = CubeSystem(3)
@@ -78,7 +81,8 @@ cube = CubeSystem(3)
 
 @testset "every test grid passes the families it claims" begin
     for (name, g) in (("TinyPlanar", TinyPlanar(4, 3)), ("MinLonLat", MinLonLat(12, 6)), ("TinyCubeSphere", TinyCubeSphere(3)),
-                      ("RegularGrid (Planar)", rg), ("CellBasedGrid lon/lat (Spherical)", lonlat),
+                      ("RegularGrid (Planar)", rg), ("RegularGrid regional to the pole (Spherical)", polar),
+                      ("CellBasedGrid lon/lat (Spherical)", lonlat),
                       ("QuadLevelGrid level 3", quad), ("CubeGrid level 2", levelgrid(cube, 2)),
                       ("GridAndTree of TinyCubeSphere", GridAndTree(TinyCubeSphere(2))),
                       ("Subset of TinyPlanar", subset(TinyPlanar(4, 3), [1, 2, 5, 6, 7])),
@@ -120,7 +124,8 @@ end
                         (BrokenExtent(TinyPlanar(4, 3)), :geometry),
                         (BrokenLocation(rg), :location),
                         (FalseAnalytic(TinyPlanar(4, 3)), :location),
-                        (BrokenDual(rg), :dual))
+                        (BrokenDual(rg), :dual),
+                        (BrokenDual(polar), :dual))
         name = string(nameof(typeof(mock)))
         rep = check_grid(mock; name)
         @test failed_families(rep) == [fam]
@@ -151,6 +156,8 @@ end
     @test failed_laws(check_grid(BrokenExtent(TinyPlanar(4, 3)))) == ["cell_extent contains the cell"]
     @test failed_laws(check_grid(FalseAnalytic(TinyPlanar(4, 3)))) == ["declared analytic location is provided (not the fallback)"]
     @test any(l -> occursin("fans wind CCW", l), failed_laws(check_grid(BrokenDual(rg))))
+    # the reversed pole fan trips the open-fan branch
+    @test any(l -> occursin("fans wind CCW", l), failed_laws(check_grid(BrokenDual(polar))))
     @test any(l -> occursin("partition level", l), failed_laws(check_system(BrokenCovering(cube))))
     @test any(l -> occursin("children-recursion oracle", l), failed_laws(check_system(BrokenDescendantRange(cube))))
     # ...and through the @testset entry points
@@ -160,6 +167,16 @@ end
     @test fails > 0
     _, fails, _, _ = capture(() -> test_system(cube; levels=1:2))
     @test fails == 0
+end
+
+@testset "open-fan winding" begin
+    # an open fan sweeps CCW by less than a turn, wherever the azimuth branch cut falls
+    pole = deg2rad.(-35.0:10.0:35.0)
+    @test Conf.is_ccw_open_sequence(pole) && !Conf.is_ccw_open_sequence(reverse(pole))
+    cut = deg2rad.([170.0, 179.0, -179.0, -170.0])
+    @test Conf.is_ccw_open_sequence(cut) && !Conf.is_ccw_open_sequence(reverse(cut))
+    @test !Conf.is_ccw_open_sequence(deg2rad.([0.0, 120.0, 240.0, 350.0, 10.0]))   # a full turn
+    @test !Conf.is_ccw_open_sequence(deg2rad.([0.0, 10.0, 10.0]))                   # a repeated azimuth
 end
 
 @testset "has_nonfallback_method" begin

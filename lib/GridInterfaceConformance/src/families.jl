@@ -1006,7 +1006,13 @@ function check_dual!(rep, grid, m, S, rng)
         for v in sample_positions(rng, nv, length(S))
             cs = collect(GrI.vertex_cells(grid, v))
             length(cs) < 3 && continue
-            ring_is_ccw(m, [cell_centroid(grid, c) for c in cs], GrI.vertex_point(grid, v)) || push!(bad, v)
+            p = GrI.vertex_point(grid, v)
+            # an open fan's centroids are an arc beside the vertex: they turn by
+            # nothing about it in any order, so check the azimuths themselves
+            ok = GrI.vertex_isopen(grid, v) ?
+                is_ccw_open_sequence([_azimuth(m, p, cell_centroid(grid, c)) for c in cs]) :
+                ring_is_ccw(m, [cell_centroid(grid, c) for c in cs], p)
+            ok || push!(bad, v)
         end
         isempty(bad), "$(length(bad)) vertices, e.g. $(first(bad, 5))"
     end
