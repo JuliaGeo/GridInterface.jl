@@ -23,7 +23,10 @@ jobs:
       fail-fast: false
       matrix:
         version:
-          - '1.12' # oldest that honours dependencies' `[sources]` and meets the allocation laws
+          # Julia 1.11 is supported, but its zero-allocation checks are
+          # known-broken (the compiler leaves a few bytes behind), so CI
+          # starts at 1.12, where they hold.
+          - '1.12'
           - '1'
           - 'pre'
         os:

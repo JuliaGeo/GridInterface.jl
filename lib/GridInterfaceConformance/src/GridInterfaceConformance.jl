@@ -1,11 +1,13 @@
 """
     GridInterfaceConformance
 
-Executable laws of GridInterface, one suite per API family (the PRD's law
-table). Suites are gated by what a grid claims; a family the grid does not
-claim is recorded as `:skip`, not failed. A generic fallback answering where
-the grid claims a provider method (an analytic `cellat`, analytic neighbours)
-is detected and failed; every verb answered by a fallback is listed.
+Executable laws of GridInterface, one suite per API family. Suites are gated
+by what a grid claims; a family the grid does not claim is recorded as
+`:skip`, not failed. The zero-allocation laws hold from Julia 1.12 on; on an
+older Julia a law that allocates is recorded as `:broken`, not failed. A
+generic fallback answering where the grid claims a provider method (an
+analytic `cellat`, analytic neighbours) is detected and failed; every verb
+answered by a fallback is listed.
 
     rep = check_grid(grid; name = "my grid")        # report only, never throws
     test_grid(grid; name = "my grid")               # same, as @testset/@test, @test_skip per unclaimed suite

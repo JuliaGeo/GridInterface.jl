@@ -5,6 +5,17 @@ const STI = GrI.STI
 
 leaves(tree) = (out = Int[]; STI.depth_first_search(i -> (push!(out, i); nothing), _ -> true, tree); sort!(out))
 
+# Zero-allocation checks hold from Julia 1.12 on. An older compiler leaves a
+# few bytes behind the same code, so there a non-zero count is recorded as
+# broken and a count of zero still passes.
+const ZERO_ALLOC = VERSION >= v"1.12"
+macro test_noalloc(ex)
+    check = :($(Expr(:macrocall, Symbol("@allocated"), __source__, ex)) == 0)
+    return esc(Expr(:macrocall, Symbol("@test"), __source__, check, :(broken = !ZERO_ALLOC && !$(copy(check)))))
+end
+# the laws a report fails: on Julia < 1.12 the zero-allocation laws are broken, not failed
+expected_fails(laws) = ZERO_ALLOC ? laws : filter(l -> !occursin("allocates nothing", l), laws)
+
 @testset "GridInterface" begin
 
 @testset "identity" begin
@@ -65,7 +76,7 @@ end
     end
     lg = levelgrid(QuadSystem(4), 3)
     @test cellat(lg, (0.3, 0.7)) == GrI.fallback_cellat(GOC.Planar(), lg, (0.3, 0.7))
-    @test (@allocated cellat(lg, (0.3, 0.7))) == 0
+    @test_noalloc cellat(lg, (0.3, 0.7))
 end
 
 @testset "tree" begin
@@ -82,7 +93,7 @@ end
     ct = treeify(lg)
     @test ct isa HierarchyCursor
     @test leaves(ct) == 1:ncells(lg)
-    @test (@allocated treeify(lg)) == 0
+    @test_noalloc treeify(lg)
     @test leaves(subtree(lg, [3, 40, 41, 200])) == [3, 40, 41, 200]
     s = subset(lg, 17:32)
     @test leaves(treeify(s)) == 1:16
@@ -201,7 +212,7 @@ end
     # degenerate rings.
     dual_fails = ["dual cells are valid CCW rings (≥ 3 points)", "forwarding sweep over extent allocates nothing"]
     rep = check_grid(D; name="dual of ExplicitQuads")
-    @test [r.law for r in rep.results if r.status === :fail] == dual_fails
+    @test [r.law for r in rep.results if r.status === :fail] == expected_fails(dual_fails)
     # the declaration without the methods is a provider error, not a silent fallback
     f = ForgetfulQuads()
     @test_throws ArgumentError nvertices(f)
@@ -219,7 +230,7 @@ end
     @test !any(r -> r.status === :fail, rep.results)
     any(r -> r.status === :fail, rep.results) && print_report(rep)
     rep = check_grid(dual(k); name="dual of KeyedPlanar")
-    @test [r.law for r in rep.results if r.status === :fail] == dual_fails
+    @test [r.law for r in rep.results if r.status === :fail] == expected_fails(dual_fails)
 end
 
 @testset "hierarchy and multi-level sets" begin
@@ -249,8 +260,8 @@ end
     @test @inferred(cell_centroid(m, 3)) isa Tuple{Float64,Float64}
     sweep(m) = (s = 0.0; for i in 1:ncells(m); s += cell_centroid(m, i)[1]; end; s)
     sweep(m)
-    @test (@allocated sweep(m)) == 0
-    @test (@allocated treeify(m)) == 0
+    @test_noalloc sweep(m)
+    @test_noalloc treeify(m)
 end
 
 @testset "round-one revisions" begin
@@ -325,7 +336,7 @@ end
     sys = QuadSystem(6); lg = levelgrid(sys, 4)
     ch = chunks(lg, 1)
     @test length(ch) == 4 && chunkat(ch, 200) == 4 && 200 in parentpositions(ch[4])
-    @test (@allocated chunks(lg, 2)) == 0
+    @test_noalloc chunks(lg, 2)
     sub = subset(lg, 60:140)
     sc = chunks(sub, 1)
     @test sum(ncells, sc) == 81
@@ -356,7 +367,7 @@ end
     @test st.cells === parentpositions(c) && position_span(st) == parentpositions(c)
     @test st.node.id == c.root && position_span(st.node) == parentpositions(c) && depth(st) < depth(t)
     @test split_weight(st) == ncells(c) && subtree_indices(st) == parentpositions(c) && walk(st) == parentpositions(c)
-    @test (@allocated subtree(g, c)) == 0
+    @test_noalloc subtree(g, c)
     # a vector of members prunes by span and filters leaves; emitted in leaf order
     v = [3, 40, 41, 200, 201, 202, 203, 255]
     sv = subtree(g, v)
@@ -463,7 +474,7 @@ end
     @test maxleaf(treeify(g; leaf_capacity=ForQueries())) == 1
     @test maxleaf(treeify(g, 3)) <= 3 && leaves(treeify(g, 3)) == 1:ncells(g)
     @test treeify(g).bucket == 4 && treeify(g, Balanced()) == treeify(g)
-    @test (@allocated treeify(g; leaf_capacity=ForSweeps())) == 0
+    @test_noalloc treeify(g; leaf_capacity=ForSweeps())
     # a bucketed leaf builds its entries once per visit; a one-cell leaf stays lazy
     firstleaf(t) = STI.isleaf(t) ? t : firstleaf(first(STI.getchild(t)))
     @test STI.child_indices_extents(firstleaf(ts)) isa Vector
@@ -535,7 +546,7 @@ end
     q = TinyPlanar(3, 2)
     gv = GridAndVertices(q)
     @test nvertices(gv) == nvertices(q) == 12 && collect(cell_vertices(gv, 1)) == collect(cell_vertices(q, 1))
-    @test (@allocated nvertices(gv)) == 0
+    @test_noalloc nvertices(gv)
     @test vertex_cells(gv, 5) == vertex_cells(q, 5) && vertex_key(gv, 5) == vertex_key(q, 5)
     D = dual(gv)
     @test D.table === gv.table && ncells(D) == 12 && cellat(D, vertex_point(q, 3)) == 3

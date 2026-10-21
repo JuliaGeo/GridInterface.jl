@@ -18,23 +18,24 @@ function expect_clean(rep)
     isempty(failed_families(rep)) || print_report(rep)
 end
 
-# A captured, silenced test set: (passes, failures, broken).
+# A captured, silenced test set: (passes, failures, skips). A known-broken law
+# (a zero-allocation law on Julia < 1.12) is a `Test.Broken` too, but not a skip.
 function count_results(ts)
     passes = hasproperty(ts, :n_passed) ? ts.n_passed : 0
-    fails = 0; broken = 0
+    fails = 0; skips = 0
     for r in ts.results
         if r isa Test.Pass
             passes += 1
         elseif r isa Test.Fail || r isa Test.Error
             fails += 1
         elseif r isa Test.Broken
-            broken += 1
+            r.test_type === :skipped && (skips += 1)
         elseif r isa Test.AbstractTestSet
-            p, f, b = count_results(r)
-            passes += p; fails += f; broken += b
+            p, f, k = count_results(r)
+            passes += p; fails += f; skips += k
         end
     end
-    return passes, fails, broken
+    return passes, fails, skips
 end
 # Julia 1.13 replaced the mutable testset stack with a scoped value entered
 # through `Test.@with_testset`; a macro only reachable on one version has to be
@@ -101,12 +102,12 @@ end
     rep = check_grid(TupleLonLat(); name="TupleLonLat")
     @test :tree in skipped_families(rep)                                            # the spherical type contract failed first
     # test_grid turns every skip into a @test_skip and names it in one @info
-    passes, fails, broken, msgs = capture(() -> test_grid(PolygonBag(); name="PolygonBag"))
-    @test broken >= 2 && passes > 0
+    passes, fails, skips, msgs = capture(() -> test_grid(PolygonBag(); name="PolygonBag"))
+    @test skips >= 2 && passes > 0
     @test any(m -> occursin("suite(s) skipped for PolygonBag", m) && occursin("dual:", m), msgs)
     # a grid that claims everything is told nothing
-    _, _, broken, msgs = capture(() -> test_grid(TinyCubeSphere(2); name="TinyCubeSphere"))
-    @test broken == 0 && !any(m -> occursin("skipped", m), msgs)
+    _, _, skips, msgs = capture(() -> test_grid(TinyCubeSphere(2); name="TinyCubeSphere"))
+    @test skips == 0 && !any(m -> occursin("skipped", m), msgs)
 end
 
 @testset "each mock fails exactly its family" begin
@@ -135,7 +136,11 @@ end
     rep = check_laziness(small, large)
     @test failed_families(rep) == [:performance]
     @test "laziness: cell_extent" in failed_laws(rep) && length(failed_laws(rep)) == 1
-    @test failed_families(check_grid(small; name="Stateful")) == [:performance]
+    # the stateful extent sweep allocates by design: a failure where the
+    # zero-allocation laws hold, a known-broken law where they do not
+    rep = check_grid(small; name="Stateful")
+    @test failed_families(rep) == (Conf.ZERO_ALLOC ? [:performance] : Symbol[])
+    @test any(r -> occursin("sweep over extent allocates nothing", r.law) && r.status === (Conf.ZERO_ALLOC ? :fail : :broken), rep.results)
     # the law each one trips, by name
     @test any(l -> occursin("symmetry", l), failed_laws(check_grid(BrokenNeighbors(TinyPlanar(4, 3)))))
     @test any(l -> occursin("leaves emit exactly 1:ncells once", l), failed_laws(check_grid(BrokenTree(TinyPlanar(4, 3)))))

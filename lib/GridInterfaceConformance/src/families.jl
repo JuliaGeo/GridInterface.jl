@@ -1175,7 +1175,7 @@ function check_grid_performance!(rep, grid, S)
         guarded!(rep, F, "forwarding sweep over $name allocates nothing") do
             a = _alloc(f, grid, S)
             metric!(rep, "sweep $name bytes", a)
-            a == 0, "$a bytes over $(length(S)) cells"
+            allocation_verdict(a), "$a bytes over $(length(S)) cells"
         end
     end
     guarded!(rep, F, "cell_centroid infers") do
@@ -1200,7 +1200,7 @@ function check_grid_performance!(rep, grid, S)
         guarded!(rep, F, "analytic cellat allocates nothing") do
             a = _alloc(cellat, grid, p)
             metric!(rep, "cellat bytes", a)
-            a == 0, "$a bytes"
+            allocation_verdict(a), "$a bytes"
         end
     else
         # a fallback (or a false claim, failed by the location family) is measured, not held

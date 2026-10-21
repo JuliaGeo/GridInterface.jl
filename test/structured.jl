@@ -62,7 +62,7 @@ end
     end
     @test floor_ok == 1000
     @test cellat(rg, (-1.0, 2.0)) === nothing && cellat(rg, (20.0, 10.0)) == 200 && cellat(rg, (0.0, 0.0)) == 1
-    @test (@allocated cellat(rg, (3.3, 4.4))) == 0
+    @test_noalloc cellat(rg, (3.3, 4.4))
     # a spherical lon/lat RegularGrid locates through the chart, repaired against the geodesic edges
     srg = RegularGrid(GOC.Spherical(; radius=1.0), collect(lons), collect(lats))
     @test location_is_analytic(srg) && cellat(srg, cell_centroid(srg, 100)) == 100
@@ -98,7 +98,7 @@ end
         @test all(n -> sort(collect(Structured.block_indices(n))) == sort(walk(n)), allnodes(t))
         @test maxleaf(treeify(g; leaf_capacity=ForSweeps())) <= 16 && maxleaf(treeify(g; leaf_capacity=ForQueries())) <= 4
         @test maxleaf(treeify(g; leaf_capacity=ForQueries())) == 4 && sort!(walk(treeify(g, 16))) == 1:ncells(g)
-        @test (@allocated treeify(g)) == 0
+        @test_noalloc treeify(g)
     end
     t = treeify(rg)
     @test t isa Structured.TopDownQuadtreeCursor && t.leafsize == (2, 2) && STI.nchild(t) == 4
@@ -127,7 +127,9 @@ end
     @test sort!(walk(treeify(c5))) == 1:ncells(c5) && sort!(walk(treeify(c5; leaf_capacity=ForSweeps()))) == 1:ncells(c5)
     @test subtree_indices(treeify(c5)) == walk(treeify(c5)) && Structured.block_indices(treeify(c5)) == 1:ncells(c5)
     @test subtree_indices(subtree(rg, c5)) == walk(subtree(rg, c5))
-    @test (@allocated grid_extent(c5)) == 0 && (@allocated subtree(rg, c5)) == 0 && (@allocated treeify(c5)) == 0
+    @test_noalloc grid_extent(c5)
+    @test_noalloc subtree(rg, c5)
+    @test_noalloc treeify(c5)
     # the subtree keyword reaches the tile's cursor and the masked quadtree alike
     @test subtree(rg, c5; leaf_capacity=ForSweeps()).leafsize == (4, 4) && subtree(rg, c5; leaf_capacity=9).leafsize == (3, 3)
     @test subtree(rg, collect(parentpositions(c5)); leaf_capacity=ForSweeps()).node.leafsize == (4, 4)
@@ -165,8 +167,11 @@ end
     @test maxneighbors(cb, Vertex()) === nothing && maxneighbors(rg, Vertex()) == 8 && maxneighbors(cube, Vertex()) == 8
     @test neighbors(cb, 40; connectivity=Edge()) isa SmallVector{4,Int} && neighbors(cb, 40) isa SmallVector{8,Int} && neighbors(cb, 72) isa SmallVector{8,Int}
     @test neighbors(cb, 1) isa Vector{Int} && neighbors(cube, 1) isa SmallVector{8,Int}
-    @test (@allocated neighbors(cb, 40; connectivity=Edge())) == 0 && (@allocated neighbors(cb, 72; connectivity=Edge())) == 0
-    @test (@allocated neighbors(cb, 40)) == 0 && (@allocated neighbors(cb, 72)) == 0 && (@allocated neighbors(cube, 14)) == 0
+    @test_noalloc neighbors(cb, 40; connectivity=Edge())
+    @test_noalloc neighbors(cb, 72; connectivity=Edge())
+    @test_noalloc neighbors(cb, 40)
+    @test_noalloc neighbors(cb, 72)
+    @test_noalloc neighbors(cube, 14)
     # declared seams beat detection: a wrap column off by 1e-9 reads as an open border unless the grid says otherwise
     let pts = [GO.UnitSphereFromGeographic()((lo, la)) for lo in lons, la in lats]
         pts[end, :] .= [GO.UnitSphereFromGeographic()((180 - 1e-9, la)) for la in lats]
@@ -219,7 +224,7 @@ end
             @test seamcross(fs, cube, f, i, j, s) == Structured.facecross(cube, f, i, j, s)
         end
     end
-    @test (@allocated seamcross(fs, cube, 1, 1, 1, 1)) == 0
+    @test_noalloc seamcross(fs, cube, 1, 1, 1, 1)
     # a periodic single face is its own seam; a regional one has none
     @test FaceSeams(cb).across[2, 1] == (1, 4) && FaceSeams(cb).across[4, 1] == (1, 2) && FaceSeams(cb).across[1, 1] == (0, 0)
     @test all(==((0, 0)), FaceSeams(rg).across)
@@ -247,7 +252,8 @@ end
     @test all(v -> !vertex_isopen(cube, v), 1:nvertices(cube))
     @test nvertices(cb) == 36 * 17 + 2 && length(vertex_cells(cb, vertex_key(cb, 1, 1))) == 36
     @test vertex_key(cb, 36, 1) == VertexKey(1, 1) && vertex_key(cb, 36, 2) == VertexKey(1, 3) && vertex_key(rg, 22, 1) == VertexKey(1, 3)
-    @test (@allocated vertex_key(rg, 22, 1)) == 0 && (@allocated vertex_key(cb, 72, 2)) == 0
+    @test_noalloc vertex_key(rg, 22, 1)
+    @test_noalloc vertex_key(cb, 72, 2)
     # keys across the dateline and across a cube seam are canonical: they round-trip through vertex_index
     @test vertex_key(cb, 72, 2) == VertexKey(1, 3) && vertex_key(cb, 72, 3) == VertexKey(37, 4)
     @test all(c -> vertex_key(cb, vertex_index(cb, VertexKey(72, c))) == vertex_key(cb, 72, c), 1:4)
