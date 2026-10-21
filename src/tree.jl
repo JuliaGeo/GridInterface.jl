@@ -139,8 +139,27 @@ end
 _capacity(grid, hint::LeafHint) = leaf_capacity(grid, hint)
 _capacity(grid, n::Integer) = Int(n)
 
-# `split_weight` and `subtree_indices` are SpatialTreeInterface's; GridInterface
-# adds methods for its own trees and wrappers.
+"""
+    split_weight(node) -> Real
+
+SpatialTreeInterface's weight of a node (its number of entries, or an
+estimate that never grows going down the tree), by which a dual traversal
+chooses the side to open. GridInterface adds methods for its own trees and
+wrappers: a hierarchy cursor's window size, a quadtree block's cell count, a
+[`GridAndTree`](@ref)'s stored tree's weight, a [`MaskedCursor`](@ref)'s
+span overlap with its members.
+"""
+split_weight
+
+"""
+    subtree_indices(node) -> AbstractVector{<:Integer}
+
+SpatialTreeInterface's leaf indices under `node`, in traversal order, without
+computing extents. GridInterface's trees answer in O(1) where the leaves
+occupy a contiguous window (a hierarchy cursor's keys, a quadtree block); a
+[`MaskedCursor`](@ref) answers the members under the node.
+"""
+subtree_indices
 
 """
     grid_extent(grid)

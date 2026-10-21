@@ -15,7 +15,17 @@ makedocs(;
     ),
     pages=[
         "Home" => "index.md",
-        "API" => "api.md",
+        "Trees and restriction" => "trees.md",
+        "API" => [
+            "api.md",
+            "Identity" => "api/identity.md",
+            "Geometry" => "api/geometry.md",
+            "Trees" => "api/trees.md",
+            "Subsets, chunks and wrappers" => "api/subsets.md",
+            "Neighbours" => "api/neighbors.md",
+            "Vertices and the dual" => "api/dual.md",
+            "Hierarchical systems" => "api/hierarchy.md",
+        ],
         "Structured grids" => "structured.md",
     ],
 )

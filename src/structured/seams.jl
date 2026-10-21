@@ -18,13 +18,8 @@ hold the same number of cells. Faces must be consistently oriented, so the
 two faces run a shared side in opposite directions ([`facecross`](@ref)'s
 contract); a side matched in the same direction throws. A side whose two
 ends coincide (a collapsed row) is left a boundary: declare its fan with
-[`facefan`](@ref). O(nfaces²) vertex reads.
-
-    seamcross(seams, grid, f, i, j, s) -> (f2, i2, j2, s2) | nothing
-
-The crossing of side `s` of cell `(i, j)` through the table: cell at
-position `p` along side `s` lands on the cell at position `n + 1 - p` along
-side `s2`, the cells of a side counted counter-clockwise about the face.
+[`facefan`](@ref). O(nfaces²) vertex reads. [`seamcross`](@ref) crosses a
+side through the table.
 """
 struct FaceSeams
     across::Matrix{Tuple{Int,Int}}        # 4 × nfaces: (f2, s2), or (0, 0)
@@ -81,6 +76,15 @@ function FaceSeams(g::AbstractStructuredGrid; tol::Real=1e-12)
     return FaceSeams(across)
 end
 
+"""
+    seamcross(seams::FaceSeams, grid, f, i, j, s) -> (f2, i2, j2, s2) | nothing
+
+The crossing of side `s` of cell `(i, j)` of face `f` through the seam
+table: the cell at position `p` along side `s` lands on the cell at position
+`n + 1 - p` along side `s2` of face `f2`, the cells of a side counted
+counter-clockwise about the face; `nothing` at a boundary. What a provider's
+[`facecross`](@ref) forwards to when it stores a `FaceSeams`.
+"""
 @inline function seamcross(t::FaceSeams, g, f, i, j, s)
     f2, s2 = @inbounds t.across[s, f]
     f2 == 0 && return nothing
