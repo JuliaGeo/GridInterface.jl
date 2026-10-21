@@ -1,3 +1,13 @@
 [deps]
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 GridInterface = "ae69c2d7-6fba-4c43-9473-473fff3cdc1f"
+SpatialTreeInterface = "bf42099b-6274-40f2-a94d-272408263a4f"
+UnitSphericalGeometryCore = "374d2b58-edf9-4f97-868a-42ae1c074d0a"
+
+[sources]
+GridInterface = {path = ".."}
+SpatialTreeInterface = {url = "https://github.com/JuliaGeo/GeometryOps.jl.git", rev = "as/split-unitsphericalgeometrycore", subdir = "SpatialTreeInterface"}
+UnitSphericalGeometryCore = {url = "https://github.com/JuliaGeo/GeometryOps.jl.git", rev = "as/split-unitsphericalgeometrycore", subdir = "UnitSphericalGeometryCore"}
+
+[compat]
+Documenter = "1"
