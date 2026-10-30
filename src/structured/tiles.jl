@@ -96,14 +96,14 @@ function GrI.chunkat(c::TileChunks, p::Integer)
     return (f == 1 ? 0 : c.offs[f-1]) + (i - 1) ÷ c.ti + 1 + ((j - 1) ÷ c.tj) * cld(ni, c.ti)
 end
 
-GrI.chunks(g::AbstractStructuredGrid) = TileChunks(g)
-GrI.chunks(g::AbstractStructuredGrid, tile::NTuple{2,Int}) = TileChunks(g, tile)
+GrI.chunks(g::AbstractLatticeGrid) = TileChunks(g)
+GrI.chunks(g::AbstractLatticeGrid, tile::NTuple{2,Int}) = TileChunks(g, tile)
 
 # a tile's extent, its subtree in the grid and its own tree are the block's
 GrI.grid_extent(s::TileSubset) = (t = s.cells; blockextent(t.grid, t.face, t.ir, t.jr))
-GrI.subtree(g::AbstractStructuredGrid, t::TileIndices; leaf_capacity=Balanced()) =
+GrI.subtree(g::AbstractLatticeGrid, t::TileIndices; leaf_capacity=Balanced()) =
     TopDownQuadtreeCursor(g, t.face, t.ir, t.jr; leafsize=_leafsize(GrI._capacity(g, leaf_capacity)))
-GrI.subtree(g::AbstractStructuredGrid, s::TileSubset; leaf_capacity=Balanced()) = subtree(g, s.cells; leaf_capacity)
+GrI.subtree(g::AbstractLatticeGrid, s::TileSubset; leaf_capacity=Balanced()) = subtree(g, s.cells; leaf_capacity)
 function GrI.treeify(s::TileSubset, n::Integer)
     t = s.cells
     return TopDownQuadtreeCursor(t.grid, t.face, t.ir, t.jr; leafsize=_leafsize(n), local_positions=true)

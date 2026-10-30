@@ -17,18 +17,33 @@ One contract a grid implements once to be regridded, stencilled, analysed and pl
 | hierarchy | multi-level systems, level grids, multi-level sets | [Hierarchical systems](api/hierarchy.md) |
 | structured | the face protocol: rasters, cubed spheres, quadtrees, tiles | [Structured grids](structured.md) |
 
-## The required set
+## Start with the capabilities you need
 
-A grid joins with four methods:
+Every recipe below supplies [`ncells`](@ref) and [`best_manifold`](@ref)
+(`Planar()` or `Spherical(radius = r)`). With GeometryOps loaded:
 
-1. [`ncells`](@ref)`(grid)`;
-2. [`best_manifold`](@ref)`(grid)`: `Planar()` or `Spherical(radius = r)`;
-3. [`cellshape`](@ref)`(grid)`: `ConvexCells()` or `SimpleCells()` for single-ring grids (the default, `GeneralCells()`, refuses `cell_boundary`);
-4. [`cell_boundary`](@ref)`(grid, i)` for single-ring grids, or [`cell_geometry`](@ref)`(grid, i)` for general ones.
+| Capability | Additional provider methods | Generic operations |
+|---|---|---|
+| Bounds only: **3 methods total** | Conservative [`cell_extent`](@ref) | Spatial tree, restriction and candidate queries |
+| Exact point location: **4 total** | `cell_extent` and [`cell_contains`](@ref) | `cellat` and `cellsat`, in addition to the bounds operations |
+| General polygon geometry: **3 total** | [`cell_geometry`](@ref) | Measurements, bounds, containment, exact queries and applicable geometric neighbours |
+| Single-ring geometry: **4 total** | [`cellshape`](@ref) and [`cell_boundary`](@ref) | Geometry fallbacks using the declared ring representation |
 
-With those four, and GeometryOps loaded, a grid gets centroids, areas, extents, a tree, point location, neighbours, vertices, the dual, queries and conformance from the generic fallbacks. On a spherical manifold points are `UnitSphericalPoint`s and extents `SphericalCap`s; the core refuses other types up front.
+`cellshape` defaults to `GeneralCells()`. A single-ring provider declares
+`ConvexCells()` or `SimpleCells()` according to its geometry. Vertex and dual
+operations have additional shape and topology requirements; see
+[Vertices and the dual](api/dual.md).
 
-The contract is duck-typed: [`AbstractGrid`](@ref) is an optional supertype, and a type with a supertype elsewhere joins by defining the verbs and `isgrid(::T) = true`.
+A provider can supply native adjacency with one [`neighbors`](@ref) override.
+Discs, rings and halos have generic implementations; native algorithms and
+capacity hints remain optional optimizations. See [Neighbours](api/neighbors.md).
+
+On a spherical manifold points are `UnitSphericalPoint`s and extents
+`SphericalCap`s; the core refuses other types up front.
+
+These counts assume [`AbstractGrid`](@ref) registration. The core contract is
+duck-typed: a foreign type adds `isgrid(::T) = true`. The
+[Structured family](structured.md) has its own subtype-based extension contract.
 
 ## Julia versions
 

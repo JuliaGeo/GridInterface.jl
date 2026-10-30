@@ -89,7 +89,13 @@ function points_box(pts)
 end
 
 # --- centroid, area, extent -------------------------------------------------
-GrI.fallback_extent(::Planar, grid, i) = points_box(_cellpoints(grid, i))
+GrI.fallback_extent(::Planar, grid, i) = _planar_extent(cellshape(grid), grid, i)
+_planar_extent(::SingleRing, grid, i) = points_box(_cellpoints(grid, i))
+function _planar_extent(::GrI.CellShape, grid, i)
+    # Bounds need one pass; retain checked materialization for curved grids.
+    pts = GrI.iscurved(GOC.best_manifold(grid)) ? _cellpoints(grid, i) : GI.getpoint(cell_geometry(grid, i))
+    return points_box(pts)
+end
 GrI.fallback_extent(::Spherical, grid, i) = points_cap(_cellpoints(grid, i))
 
 # The area centroid when it lies in the cell; otherwise (holes, multipolygons,

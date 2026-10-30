@@ -585,5 +585,8 @@ end
 end
 
 include("structured.jl")
+include("structured_defaults.jl")
+include("structured_corners.jl")
+include("streaming_extents.jl")
 
 end

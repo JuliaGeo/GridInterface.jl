@@ -1,25 +1,32 @@
 """
     GridInterface.Structured
 
-The logically rectangular family: a grid that is one or more faces of an
-(i, j) lattice of shared vertices (lon/lat and curvilinear rasters, cubed
-spheres, HEALPix faces). A provider implements five hooks on its own type (a
-subtype of [`AbstractStructuredGrid`](@ref)) and gets every GridInterface verb
-derived: rings and corners, extents, a quadtree per face under a root over
-faces, tile chunks, point location, aligned neighbours within and across
-faces, analytic vertex keys.
+[`AbstractLatticeGrid`](@ref) supplies rectangular storage faces, indexing,
+quadtrees and tiles. Its child [`AbstractStructuredGrid`](@ref) derives geometry
+from shared lattice vertices: implement `best_manifold`, [`facesize`](@ref) and
+[`facevertex`](@ref) for a single face. Dimensions are positive cell counts.
 
-    nfaces(grid); facesize(grid, f) -> (ni, nj); facevertex(grid, f, a, b) -> point
-    faceposition(grid, f, i, j) -> position; facecell(grid, p) -> (f, i, j)
+[`nfaces`](@ref) defaults to `1`; [`faceposition`](@ref) and [`facecell`](@ref)
+default to face-major positions with `i` fastest. Several faces add `nfaces`;
+the generic maps scan face sizes, so providers may retain faster explicit maps.
+Existing explicit methods, including the concrete grids' optimized maps, take
+precedence. Custom numbering supplies both maps and declares
+[`facecolumnmajor`](@ref) `false` when needed.
 
-Faces with separable coordinates (a raster, lon/lat) add the axis hooks
+Storage-only planar providers implement `best_manifold`, `facesize` and
+[`cell_geometry`](@ref GridInterface.cell_geometry). They keep ordinary geometry
+traits and fallbacks; a block's extent unions every cell extent. Curved storage
+providers must implement conservative [`blockextent`](@ref). These defaults
+require the corresponding subtype; foreign types must adopt it or use an
+adapter.
+
+Shared-vertex faces with separable coordinates add the axis hooks
 ([`hasfaceaxes`](@ref), [`faceaxes`](@ref), [`facecoords`](@ref),
-[`faceperiod`](@ref), [`facelocalindex`](@ref)) and get O(1) point location.
-Seams (a periodic axis, the edges of a cubed sphere) are declared by
-arithmetic through [`facecross`](@ref); [`facefan`](@ref) covers the
-vertices the walk across seams cannot reach (a lon/lat pole). A provider
-with a closed-form block extent overrides [`blockextent`](@ref), which every
-derived extent (tree nodes, leaf cells, tiles) reads.
+[`faceperiod`](@ref), [`facelocalindex`](@ref)) to derive point location from the
+axes. Seams are declared through [`facecross`](@ref); [`facefan`](@ref) covers
+vertices the seam walk cannot reach, such as a lon/lat pole. Providers with
+closed-form block bounds override `blockextent`, which the default cell, tree
+and tile extent implementations read.
 
 The three concrete grids ([`CellBasedGrid`](@ref), [`RegularGrid`](@ref),
 [`ExplicitPolygonGrid`](@ref)) and the quadtree
@@ -49,7 +56,7 @@ include("grids.jl")
 include("quadtree.jl")
 include("tiles.jl")
 
-export AbstractStructuredGrid, isstructured
+export AbstractLatticeGrid, AbstractStructuredGrid, isstructured
 export nfaces, facesize, facevertex, faceposition, facecell
 export hasfaceaxes, faceaxes, facecoords, faceperiod, facelocalindex, facecolumnmajor
 export facecross, facefan

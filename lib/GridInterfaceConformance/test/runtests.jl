@@ -77,7 +77,53 @@ lonlat = CellBasedGrid([GO.UnitSphereFromGeographic()((lo, la)) for lo in range(
 quad = levelgrid(QuadSystem(4), 3)
 cube = CubeSystem(3)
 
+# Keep the disc and rings internally consistent so only the independent
+# adjacency-distance law can expose a missing or misplaced second ring.
+struct WrongSecondRing{G} <: GrI.AbstractWrappedGrid
+    grid::G
+    fault::Symbol
+end
+Base.parent(g::WrongSecondRing) = g.grid
+function GrI.ring(g::WrongSecondRing, i::Integer, k::Integer; connectivity::GrI.Connectivity=Vertex())
+    k == 2 || return ring(parent(g), i, k; connectivity)
+    return g.fault === :missing ? Int[] : ring(parent(g), i, 3; connectivity)
+end
+function GrI.neighbors(g::WrongSecondRing, i::Integer, k::Integer; connectivity::GrI.Connectivity=Vertex())
+    k == 2 || return neighbors(parent(g), i, k; connectivity)
+    return vcat(ring(g, i, 1; connectivity), ring(g, i, 2; connectivity))
+end
+
+function neighbor_report(g)
+    rep = ConformanceReport(string(typeof(g)))
+    Conf.check_neighbors!(rep, g, best_manifold(g), collect(1:ncells(g)))
+    return rep
+end
+
 @testset "GridInterfaceConformance" begin
+
+@testset "parent-distance rings and compact Edge order" begin
+    path = TinyPlanar(5, 1)
+    s = subset(path, [1, 3, 5])
+    nested = subset(subset(path, [1, 3, 4, 5]), [1, 2, 4])
+    for g in (s, nested, GridAndTree(s), GridAndVertices(s), GridAndTree(GridAndVertices(nested)),
+              subset(GridAndTree(s), [1, 2, 3]))
+        @test isempty(neighbors(g, 1))
+        @test ring(g, 1, 2) == [2]
+        @test collect(neighbors(g, 1, 2)) == [2]
+        expect_clean(neighbor_report(g))
+    end
+    # At the left boundary the only Edge neighbour is across edge 2, although
+    # it occupies slot 1 in the compact vector.
+    @test collect(neighbors(path, 1; connectivity=Edge())) == [2]
+    expect_clean(neighbor_report(path))
+    for g in (WrongSecondRing(path, :missing), WrongSecondRing(path, :distant),
+              WrongSecondRing(s, :missing), WrongSecondRing(nested, :missing),
+              subset(WrongSecondRing(path, :missing), [1, 3, 5]))
+        rep = neighbor_report(g)
+        @test failed_laws(rep) == ["rings partition the disc (k ≤ 2)"]
+        @test any(r -> startswith(r.law, "rings 0:k concatenate") && r.status === :pass, rep.results)
+    end
+end
 
 @testset "every test grid passes the families it claims" begin
     for (name, g) in (("TinyPlanar", TinyPlanar(4, 3)), ("MinLonLat", MinLonLat(12, 6)), ("TinyCubeSphere", TinyCubeSphere(3)),

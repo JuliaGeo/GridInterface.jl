@@ -83,10 +83,10 @@ function _collapsed(points)
 end
 GOC.best_manifold(g::CellBasedGrid) = g.manifold
 nfaces(::CellBasedGrid) = 1
-facesize(g::CellBasedGrid, f) = (size(g.points, 1) - 1, size(g.points, 2) - 1)
-Base.@propagate_inbounds facevertex(g::CellBasedGrid, f, a, b) = g.points[a, b]
 @inline faceposition(g::CellBasedGrid, f, i, j) = _colmajor_position(g, i, j)
 @inline facecell(g::CellBasedGrid, k) = _colmajor_cell(g, k)
+facesize(g::CellBasedGrid, f) = (size(g.points, 1) - 1, size(g.points, 2) - 1)
+Base.@propagate_inbounds facevertex(g::CellBasedGrid, f, a, b) = g.points[a, b]
 @inline facecross(g::CellBasedGrid, f, i, j, s) =
     ((ni, nj) = facesize(g, 1); _seamcross(g.periodic, g.collapsed, ni, nj, i, j, s))
 facefan(g::CellBasedGrid, f, a, b) = _facefan(g, g.periodic, g.collapsed, f, a, b)
@@ -126,12 +126,12 @@ RegularGrid(manifold::Manifold, x, y; periodic=nothing, collapsed=nothing) =
 _spansperiod(x, period) = period !== nothing && abs((last(x) - first(x)) - period) <= 1e-9 * period
 GOC.best_manifold(g::RegularGrid) = g.manifold
 nfaces(::RegularGrid) = 1
+@inline faceposition(g::RegularGrid, f, i, j) = _colmajor_position(g, i, j)
+@inline facecell(g::RegularGrid, k) = _colmajor_cell(g, k)
 facesize(g::RegularGrid, f) = (length(g.x) - 1, length(g.y) - 1)
 Base.@propagate_inbounds facevertex(g::RegularGrid, f, a, b) = _vertex(g.manifold, g.x[a], g.y[b])
 _vertex(::Planar, x, y) = (x, y)
 _vertex(m, x, y) = iscurved(m) ? UnitSphereFromGeographic()((x, y)) : (x, y)
-@inline faceposition(g::RegularGrid, f, i, j) = _colmajor_position(g, i, j)
-@inline facecell(g::RegularGrid, k) = _colmajor_cell(g, k)
 @inline facecross(g::RegularGrid, f, i, j, s) =
     ((ni, nj) = facesize(g, 1); _seamcross(g.periodic, g.collapsed, ni, nj, i, j, s))
 facefan(g::RegularGrid, f, a, b) = _facefan(g, g.periodic, g.collapsed, f, a, b)
@@ -160,33 +160,23 @@ positions, tiles and the quadtree; its cells are the polygons as given
 (`GeneralCells`: [`cell_geometry`](@ref GridInterface.cell_geometry), no
 lattice ring, no `facevertex`), with geometric fallbacks for everything else.
 """
-struct ExplicitPolygonGrid{M<:Manifold,P<:AbstractMatrix} <: AbstractStructuredGrid
+struct ExplicitPolygonGrid{M<:Manifold,P<:AbstractMatrix} <: AbstractLatticeGrid
     manifold::M
     polygons::P
 end
 ExplicitPolygonGrid(polygons::AbstractMatrix) = ExplicitPolygonGrid(Planar(), polygons)
 GOC.best_manifold(g::ExplicitPolygonGrid) = g.manifold
 nfaces(::ExplicitPolygonGrid) = 1
-facesize(g::ExplicitPolygonGrid, f) = size(g.polygons)
-facevertex(g::ExplicitPolygonGrid, f, a, b) = _throw_facevertex(g)
 @inline faceposition(g::ExplicitPolygonGrid, f, i, j) = _colmajor_position(g, i, j)
 @inline facecell(g::ExplicitPolygonGrid, k) = _colmajor_cell(g, k)
+facesize(g::ExplicitPolygonGrid, f) = size(g.polygons)
 
-GrI.cellshape(::ExplicitPolygonGrid) = GeneralCells()
-GrI.cell_boundary(g::ExplicitPolygonGrid, k::Integer) = GrI._refuse_boundary(g)
-GrI.cell_corners(g::ExplicitPolygonGrid, k::Integer) = GrI._refuse_boundary(g)
 GrI.cell_geometry(g::ExplicitPolygonGrid, k::Integer) = ((_, i, j) = _facecell(g, k); g.polygons[i, j])
 GrI.cell_extent(g::ExplicitPolygonGrid, k::Integer) =
     ((_, i, j) = _facecell(g, k); _blockextent(g.manifold, g, 1, i:i, j:j))
 _cellextent(m, g::ExplicitPolygonGrid, f, i, j) = _blockextent(m, g, f, i:i, j:j)
-GrI.neighbors_are_analytic(::ExplicitPolygonGrid) = false
-GrI.winding(::ExplicitPolygonGrid, ::Connectivity) = Unordered()
-GrI.maxneighbors(::ExplicitPolygonGrid, ::Edge) = nothing
-GrI.neighbors(g::ExplicitPolygonGrid, k::Integer; connectivity::Connectivity=Vertex()) =
-    GrI.fallback_neighbors(g.manifold, g, Int(k), connectivity)
-GrI.vertices_are_analytic(::ExplicitPolygonGrid) = false
-GrI.location_is_analytic(::ExplicitPolygonGrid) = false
-GrI.cellat(g::ExplicitPolygonGrid, p) = GrI.fallback_cellat(g.manifold, g, check_point(g.manifold, p))
+blockextent(g::ExplicitPolygonGrid, f, ir::UnitRange{Int}, jr::UnitRange{Int}) =
+    _blockextent(best_manifold(g), g, f, ir, jr)
 
 # CR's extents for a block of stored polygons: the union of their boxes on
 # the plane; on the sphere the cap about the mean of every polygon vertex.

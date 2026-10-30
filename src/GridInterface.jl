@@ -6,18 +6,22 @@ plotted by every consumer. The contract is a set of semi-orthogonal API
 families (identity, tree, subsets and chunks, cell geometry and point location,
 neighbours, dual grid, hierarchical systems); a grid opts into each.
 
-**The required set is four methods:**
+**Implement the methods for the capabilities you need.** With GeometryOps
+loaded, these starting points have generic fallbacks:
 
-1. [`ncells`](@ref)`(grid)`;
-2. [`best_manifold`](@ref)`(grid)` (`Planar()`, `Spherical(radius = r)`);
-3. [`cellshape`](@ref)`(grid)`: `ConvexCells()` or `SimpleCells()` for
-   single-ring grids (the default, `GeneralCells()`, refuses `cell_boundary`);
-4. [`cell_boundary`](@ref)`(grid, i)` (single-ring grids) or
-   [`cell_geometry`](@ref)`(grid, i)` (general grids).
+- Bounds and a spatial tree: [`ncells`](@ref), [`best_manifold`](@ref),
+  and conservative [`cell_extent`](@ref). Add [`cell_contains`](@ref)
+  for exact point location.
+- General polygon geometry: `ncells`, `best_manifold`, and
+  [`cell_geometry`](@ref). [`cellshape`](@ref) defaults to `GeneralCells()`.
+- Single-ring geometry: `ncells`, `best_manifold`, a truthful `cellshape`
+  declaration (`ConvexCells()` or `SimpleCells()`), and
+  [`cell_boundary`](@ref).
 
-With those four (and GeometryOps loaded) a grid gets centroids, areas,
-extents, a tree, point location, neighbours, vertices, the dual, queries and
-conformance. On a spherical (or ellipsoidal) manifold points must be
+Polygon geometry supplies geometric measurements, bounds, containment and
+applicable neighbour fallbacks. Vertex and dual operations have additional
+shape and topology requirements documented in their API families.
+On a spherical (or ellipsoidal) manifold points must be
 `UnitSphericalPoint`s and extents `SphericalCap`s (from
 `UnitSphericalGeometryCore`, re-exported here); the core refuses other types
 up front.

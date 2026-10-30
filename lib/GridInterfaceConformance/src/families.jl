@@ -669,6 +669,28 @@ function check_location!(rep, grid, m, S, tree)
 end
 
 # ------------------------------------------------------------------ neighbours
+# Build distance two from one-step adjacency, independently of provider rings
+# and discs. Subsets clip parent distances, including through nested subsets;
+# transparent wrappers retain that domain rather than inducing a member graph.
+function _ring2_oracle(grid, i)
+    domain = grid
+    while domain isa GrI.AbstractWrappedGrid
+        domain = parent(domain)
+    end
+    if domain isa GrI.Subset
+        P = parent(domain)
+        ps = _ring2_oracle(P, GrI.parentpositions(domain)[i])
+        out = Set{Int}()
+        for p in ps
+            j = localindex(domain, cellindex(P, p))
+            j === nothing || push!(out, j)
+        end
+        return out
+    end
+    r1 = Set(neighbors(grid, i))
+    return Set{Int}(j for k in r1 for j in neighbors(grid, k) if j != i && !(j in r1))
+end
+
 function check_neighbors!(rep, grid, m, S)
     F = :neighbors
     sh = cellshape(grid)
@@ -751,7 +773,7 @@ function check_neighbors!(rep, grid, m, S)
         ok, detail
     end
     if cellshape(grid) isa SingleRing && conformity(grid) isa Conforming && winding(grid, Edge()) isa CounterClockwise
-        guarded!(rep, F, "alignment: Edge neighbour k lies across edge (corner k, corner k+1)") do
+        guarded!(rep, F, "alignment: Edge neighbours follow increasing boundary-edge indices, omitting missing neighbours") do
             # each Edge neighbour holds both ends of one edge of i (corners are
             # shared exactly); edge indices increase, and equal 1:n on a full cell
             bad = Int[]
@@ -765,7 +787,7 @@ function check_neighbors!(rep, grid, m, S)
             isempty(bad), "$(length(bad)) of $(length(SS)) cells, e.g. $(first(bad, 5))"
         end
     end
-    if Structured.isstructured(grid) && sh isa SingleRing
+    if grid isa Structured.AbstractStructuredGrid && sh isa SingleRing
         check_seams!(rep, grid, S)
     end
     guarded!(rep, F, "rings partition the disc (k ≤ 2)") do
@@ -776,7 +798,7 @@ function check_neighbors!(rep, grid, m, S)
             ok &= r0 == [i]
             ok &= Set(r1) == Set(nb(i, Vertex()))
             ok &= isempty(intersect(r1, r2)) && !(i in r2) && allunique(r2)
-            ok &= all(j -> any(k -> k in r1, neighbors(grid, j)), r2)
+            ok &= Set(r2) == _ring2_oracle(grid, i)
         end
         ok
     end

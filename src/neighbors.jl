@@ -77,12 +77,16 @@ end
     winding(grid, connectivity = Vertex()) -> Winding
 
 The order [`neighbors`](@ref) returns. Default: `CounterClockwise()` for a
-tessellating single-ring grid answered by the geometric fallback (which sorts by azimuth and
-starts at the neighbour across the edge from corner 1 to corner 2, so Edge
-neighbour `k` lies across edge `(v_k, v_k+1)`), `Unordered()` otherwise.
+tessellating single-ring grid answered by the geometric fallback (which sorts
+by azimuth, starting at the edge from corner 1 to corner 2), `Unordered()`
+otherwise.
 
-Alignment law under `CounterClockwise` Edge winding: `neighbors(grid, i; connectivity = Edge())[k]`
-lies across the edge from `cell_vertices(grid, i)[k]` to the next vertex.
+On conforming single-ring grids, `CounterClockwise` Edge winding promises
+increasing boundary-edge indices, where edge `k` runs from
+`cell_corners(grid, i)[k]` to the next corner (wrapping at the end). Edges
+without a neighbour, including neighbours clipped out of a [`Subset`](@ref),
+are omitted. When every edge has a neighbour, neighbour `k` lies across edge
+`k`. The compact vector has no placeholders for missing edges.
 """
 winding(grid, conn::Connectivity) = _default_winding(cellshape(grid), grid)
 winding(grid) = winding(grid, Vertex())
@@ -176,7 +180,9 @@ end
 
 Positions at adjacency distance exactly `k` from `i` (`ring(grid, i, 0) == [i]`).
 Generic method: the last ring of the disc, in discovery order (so ring 1 has the
-order of `neighbors`).
+order of `neighbors`). On a [`Subset`](@ref), distance is measured in the
+parent and only member cells are returned, just as for the disc form of
+[`neighbors`](@ref); paths may pass through non-members.
 """
 function ring(grid, i::Integer, k::Integer; connectivity::Connectivity=Vertex())
     k >= 0 || throw(ArgumentError("ring distance must be non-negative"))

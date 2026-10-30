@@ -5,31 +5,37 @@
 # ===========================================================================
 
 """
-    abstract type AbstractStructuredGrid <: AbstractGrid
+    AbstractLatticeGrid <: AbstractGrid
 
-Supertype of the structured family. A subtype implements [`nfaces`](@ref),
-[`facesize`](@ref), [`facevertex`](@ref), [`faceposition`](@ref) and
-[`facecell`](@ref); every other verb is derived here (and may be overridden).
-Cells are `ConvexCells` by default (every lattice cell geodesically convex,
-what ConservativeRegridding's clipper assumes); positions within a face must
-be column-major (`i` fastest) for the tile chunks.
+Rectangular storage faces with indexing, tile chunks and a quadtree. Geometry,
+neighbours and point location use the ordinary GridInterface contract.
 """
-abstract type AbstractStructuredGrid <: AbstractGrid end
+abstract type AbstractLatticeGrid <: AbstractGrid end
+"""
+    AbstractStructuredGrid <: AbstractLatticeGrid
 
-"Whether `g` is a member of the structured family (an [`AbstractStructuredGrid`](@ref))."
-isstructured(g) = g isa AbstractStructuredGrid
+Shared-vertex lattice geometry. Implement `best_manifold`, `facevertex` and
+`facesize`. One face and column-major indexing are defaults; providers may
+override `nfaces`, `faceposition` and `facecell`. Cells default to `ConvexCells`; seams and optional axis
+hooks derive analytic neighbours, vertex keys and point location.
+"""
+abstract type AbstractStructuredGrid <: AbstractLatticeGrid end
+
+"Whether `g` has rectangular storage faces (an [`AbstractLatticeGrid`](@ref))."
+isstructured(g) = g isa AbstractLatticeGrid
 
 """
     nfaces(grid) -> Int
 
 Number of lattice faces (1 for a raster, 6 for a cubed sphere).
+Defaults to `1` for [`AbstractLatticeGrid`](@ref).
 """
-function nfaces end
+nfaces(::AbstractLatticeGrid) = 1
 
 """
     facesize(grid, f) -> (ni, nj)
 
-Cells along each lattice axis of face `f`.
+Positive cell counts along each lattice axis of face `f`.
 """
 function facesize end
 
@@ -41,20 +47,48 @@ Lattice vertex `(a, b)` of face `f`, `a in 1:ni+1`, `b in 1:nj+1`
 `(i, j), (i+1, j), (i+1, j+1), (i, j+1)`, counter-clockwise.
 """
 function facevertex end
+facevertex(g::AbstractLatticeGrid, f, a, b) = _throw_facevertex(g)
 
 """
     faceposition(grid, f, i, j) -> Int
 
 Position of cell `(i, j)` of face `f`; a bijection onto `1:ncells(grid)`.
+The [`AbstractLatticeGrid`](@ref) default concatenates faces in face order,
+with `i` fastest within each face. Multiple faces use a scan of preceding
+face sizes; provider-specific methods may supply faster maps.
 """
-function faceposition end
+@inline function faceposition(g::AbstractLatticeGrid, f, i, j)
+    nfaces(g) == 1 && return _colmajor_position(g, i, j)
+    offset = 0
+    for face in 1:f-1
+        ni, nj = facesize(g, face)
+        offset += ni * nj
+    end
+    return offset + i + (j - 1) * facesize(g, f)[1]
+end
+
 
 """
     facecell(grid, p) -> (f, i, j)
 
-The inverse of [`faceposition`](@ref).
+The inverse of [`faceposition`](@ref). The [`AbstractLatticeGrid`](@ref)
+default scans face sizes for multiple faces; explicit provider methods take
+precedence.
 """
-function facecell end
+@inline function facecell(g::AbstractLatticeGrid, k)
+    nfaces(g) == 1 && return _colmajor_cell(g, k)
+    remaining = k
+    for f in 1:nfaces(g)
+        ni, nj = facesize(g, f)
+        count = ni * nj
+        if remaining <= count
+            return (f, (remaining - 1) % ni + 1, (remaining - 1) ÷ ni + 1)
+        end
+        remaining -= count
+    end
+    return GrI._throw_bounds(g, k)
+end
+
 
 """
     hasfaceaxes(grid, f) -> Bool
@@ -196,7 +230,7 @@ struct Corners{P} <: AbstractVector{P}
     sides::NTuple{4,Int}
     n::Int
 end
-function Corners(c::NTuple{4,P}) where {P}
+@inline function Corners(c::NTuple{4,P}) where {P}
     s = (0, 0, 0, 0); n = 0
     for k in 1:4
         GrI._near(c[k], c[mod1(k + 1, 4)]) && continue
@@ -219,8 +253,8 @@ function _corner_of(r::Corners, p)
     return 0
 end
 
-_corners(g, f, i, j) = Corners(_lattice_corners(g, f, i, j))
-_corners(g, k::Integer) = ((f, i, j) = _facecell(g, k); _corners(g, f, i, j))
+@inline _corners(g, f, i, j) = Corners(_lattice_corners(g, f, i, j))
+@inline _corners(g, k::Integer) = ((f, i, j) = _facecell(g, k); _corners(g, f, i, j))
 
 GrI.cell_boundary(g::AbstractStructuredGrid, k::Integer) = _corners(g, k)
 GrI.cell_corners(g::AbstractStructuredGrid, k::Integer) = _corners(g, k)
@@ -229,7 +263,7 @@ GrI.cell_corners(g::AbstractStructuredGrid, k::Integer) = _corners(g, k)
 # Identity, shape, extents.
 # ---------------------------------------------------------------------------
 
-function GrI.ncells(g::AbstractStructuredGrid)
+function GrI.ncells(g::AbstractLatticeGrid)
     n = 0
     for f in 1:nfaces(g)
         ni, nj = facesize(g, f)
@@ -300,13 +334,25 @@ the block. The one override point for a provider whose block extents have a
 closed form (a geographic raster's analytic cap): the quadtree's
 `node_extent`, its leaf entries (`ir` and `jr` of length one),
 [`cell_extent`](@ref GridInterface.cell_extent) and a tile's `grid_extent`
-all read it. The default derives a block's extent from its perimeter vertices
+all read it. Shared-vertex grids derive a block's extent from its perimeter vertices
 and a single cell's from its four corners (the private `_blockextent` and
 `_cellextent`, which a provider may also specialize per manifold).
 """
-blockextent(g, f, ir::UnitRange{Int}, jr::UnitRange{Int}) =
+blockextent(g::AbstractStructuredGrid, f, ir::UnitRange{Int}, jr::UnitRange{Int}) =
     (length(ir) == 1 && length(jr) == 1) ? _cellextent(best_manifold(g), g, f, first(ir), first(jr)) :
     _blockextent(best_manifold(g), g, f, ir, jr)
+
+function blockextent(g::AbstractLatticeGrid, f, ir::UnitRange{Int}, jr::UnitRange{Int})
+    isempty(ir) || isempty(jr) || return _storage_blockextent(best_manifold(g), g, f, ir, jr)
+    throw(ArgumentError("a block must contain at least one cell"))
+end
+function _storage_blockextent(::Planar, g, f, ir, jr)
+    return reduce(Extents.union, (cell_extent(g, faceposition(g, f, i, j)) for j in jr for i in ir))
+end
+function _storage_blockextent(m, g, f, ir, jr)
+    iscurved(m) && throw(ArgumentError("curved storage grids must implement blockextent"))
+    return _storage_blockextent(Planar(), g, f, ir, jr)
+end
 
 # a single cell: its four corners, no perimeter
 function _cellextent(m, g, f, i, j)
@@ -382,13 +428,13 @@ end
 # The tree family: the per-face quadtree (quadtree.jl) and tiles (tiles.jl).
 # ---------------------------------------------------------------------------
 
-GrI.leaf_capacity(::AbstractStructuredGrid, ::ForSweeps) = 16     # 4x4 leaves
-GrI.leaf_capacity(::AbstractStructuredGrid, ::ForQueries) = 4     # 2x2: CR's default
+GrI.leaf_capacity(::AbstractLatticeGrid, ::ForSweeps) = 16     # 4x4 leaves
+GrI.leaf_capacity(::AbstractLatticeGrid, ::ForQueries) = 4     # 2x2: CR's default
 
 # a cell count per leaf -> the quadtree's per-side leaf size
 _leafsize(n::Integer) = (s = max(1, isqrt(Int(n))); (s, s))
 
-GrI.treeify(g::AbstractStructuredGrid, n::Integer) = nfaces(g) == 1 ?
+GrI.treeify(g::AbstractLatticeGrid, n::Integer) = nfaces(g) == 1 ?
     TopDownQuadtreeCursor(g, 1; leafsize=_leafsize(n)) : FaceRootTree(g, _leafsize(n))
 
 # ---------------------------------------------------------------------------
